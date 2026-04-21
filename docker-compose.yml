@@ -1,0 +1,53 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.docker
+    environment:
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+    depends_on:
+      - db
+      - redis
+    ports:
+      - "${APP_PORT:-8080}:80"
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.docker
+    environment:
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      - db
+      - redis
+    command: sh -lc "while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done"
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-mycafecloud}
+      POSTGRES_USER: ${DB_USERNAME:-mycafecloud}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mycafecloud}
+    ports:
+      - "${DB_FORWARD_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_FORWARD_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:

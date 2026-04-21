@@ -1,0 +1,46 @@
+services:
+  api:
+    extends:
+      file: docker-compose.yml
+      service: api
+
+  scheduler:
+    extends:
+      file: docker-compose.yml
+      service: scheduler
+
+  db:
+    extends:
+      file: docker-compose.yml
+      service: db
+
+  redis:
+    extends:
+      file: docker-compose.yml
+      service: redis
+
+  cp:
+    build:
+      context: ../mycafecloud-cp
+      dockerfile: Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      NUXT_CP_BACKEND_ORIGIN: http://api
+    depends_on:
+      - api
+    ports:
+      - "${CP_PORT:-3000}:3000"
+    restart: unless-stopped
+
+  saas:
+    build:
+      context: ../mycafecloud-saas
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${SAAS_API_BASE_URL:-http://localhost:8080/api}
+    depends_on:
+      - api
+    ports:
+      - "${SAAS_PORT:-4173}:80"
+    restart: unless-stopped
