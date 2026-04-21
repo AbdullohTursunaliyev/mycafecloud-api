@@ -1,0 +1,32 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('client_transfers', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('tenant_id');
+            $table->unsignedBigInteger('from_client_id');
+            $table->unsignedBigInteger('to_client_id');
+            $table->unsignedBigInteger('operator_id');
+            $table->unsignedBigInteger('shift_id')->nullable();
+            $table->integer('amount');
+            $table->timestamps();
+
+            $table->index(['tenant_id']);
+            $table->index(['tenant_id', 'shift_id']);
+            $table->index(['tenant_id', 'from_client_id']);
+            $table->index(['tenant_id', 'to_client_id']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('client_transfers');
+    }
+};
