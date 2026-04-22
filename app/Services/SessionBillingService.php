@@ -3,17 +3,20 @@
 namespace App\Services;
 
 use App\Models\ClientPackage;
-use App\Models\PcCommand;
-use App\Models\PcCell;
 use App\Models\Session;
 use App\Models\SessionBillingLog;
-use App\Models\Zone;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class SessionBillingService
 {
+    public function __construct(
+        private readonly PcZoneResolver $pcZoneResolver,
+        private readonly ClientWalletService $wallets,
+    ) {
+    }
+
     public function billSingleSession(Session $s, ?Carbon $now = null): array
     {
         $now = ($now ?: now())->copy()->second(0);
@@ -177,7 +180,7 @@ class SessionBillingService
             }
 
             $pricePerMin = (int) ceil($pricePerHour / 60);
-            $walletTotal = $this->walletTotal($client);
+            $walletTotal = $this->wallets->total($client);
             $canMinutes = $pricePerMin > 0 ? (int) floor($walletTotal / $pricePerMin) : 0;
             $use = min($minutes, max(0, $canMinutes));
 
@@ -187,7 +190,7 @@ class SessionBillingService
             }
 
             $sum = $pricePerMin * $use;
-            $chargeInfo = $this->chargeWallet($client, $sum);
+            $chargeInfo = $this->wallets->charge($client, $sum);
             $charged = $chargeInfo['charged'];
             if ($charged <= 0) {
                 $this->stopSession($s, $now, 'balance_empty');
@@ -238,41 +241,9 @@ class SessionBillingService
 
         // 2) zoneRel (pcs.zone_id)
         if ($s->relationLoaded('pc') && $s->pc) {
-            if ($s->pc->zoneRel) return (int) $s->pc->zoneRel->price_per_hour;
+            $resolved = $this->pcZoneResolver->resolveNameAndRate($s->pc);
 
-            // 2.1) fallback: pcs.zone_id mavjud bo'lsa, zones.id orqali topamiz
-            if (!empty($s->pc->zone_id)) {
-                $zById = Zone::query()
-                    ->where('tenant_id', $s->tenant_id)
-                    ->where('id', (int) $s->pc->zone_id)
-                    ->first();
-                if ($zById) return (int) $zById->price_per_hour;
-            }
-
-            // 3) fallback: pcs.zone string
-            if (!empty($s->pc->zone)) {
-                $z = Zone::query()
-                    ->where('tenant_id', $s->tenant_id)
-                    ->whereRaw('lower(name) = lower(?)', [$s->pc->zone])
-                    ->first();
-                if ($z) return (int) $z->price_per_hour;
-            }
-
-            // 4) fallback: layout cell zone (pc_cells.zone_id)
-            $cellZoneId = PcCell::query()
-                ->where('tenant_id', $s->tenant_id)
-                ->where('pc_id', $s->pc->id)
-                ->whereNotNull('zone_id')
-                ->orderByDesc('id')
-                ->value('zone_id');
-
-            if ($cellZoneId) {
-                $zCell = Zone::query()
-                    ->where('tenant_id', $s->tenant_id)
-                    ->where('id', (int) $cellZoneId)
-                    ->first();
-                if ($zCell) return (int) $zCell->price_per_hour;
-            }
+            return (int) $resolved['rate_per_hour'];
         }
 
         return 0;
@@ -284,12 +255,12 @@ class SessionBillingService
         $s->status = 'finished';
         $s->save();
 
-        $pc = $s->pc()->first();
+            $pc = $s->pc()->first();
         if ($pc) {
             $pc->status = 'locked';
             $pc->save();
 
-            PcCommand::create([
+            \App\Models\PcCommand::create([
                 'tenant_id' => $s->tenant_id,
                 'pc_id' => $pc->id,
                 'type' => 'LOCK',
@@ -299,56 +270,4 @@ class SessionBillingService
         }
     }
 
-    private function walletTotal($client): int
-    {
-        $balance = max(0, (int) ($client->balance ?? 0));
-        $bonus = max(0, (int) ($client->bonus ?? 0));
-        return $balance + $bonus;
-    }
-
-    private function chargeWallet($client, int $amount): array
-    {
-        $need = max(0, (int) $amount);
-        if ($need <= 0) {
-            return [
-                'charged' => 0,
-                'balance_before' => (int) ($client->balance ?? 0),
-                'bonus_before' => (int) ($client->bonus ?? 0),
-                'balance_after' => (int) ($client->balance ?? 0),
-                'bonus_after' => (int) ($client->bonus ?? 0),
-            ];
-        }
-
-        $balance = max(0, (int) ($client->balance ?? 0));
-        $bonus = max(0, (int) ($client->bonus ?? 0));
-        $available = $balance + $bonus;
-        if ($available <= 0) {
-            return [
-                'charged' => 0,
-                'balance_before' => $balance,
-                'bonus_before' => $bonus,
-                'balance_after' => $balance,
-                'bonus_after' => $bonus,
-            ];
-        }
-
-        $charge = min($need, $available);
-
-        $fromBalance = min($balance, $charge);
-        $left = $charge - $fromBalance;
-
-        $fromBonus = min($bonus, $left);
-
-        $client->balance = $balance - $fromBalance;
-        $client->bonus = $bonus - $fromBonus;
-        $client->save();
-
-        return [
-            'charged' => $charge,
-            'balance_before' => $balance,
-            'bonus_before' => $bonus,
-            'balance_after' => (int) $client->balance,
-            'bonus_after' => (int) $client->bonus,
-        ];
-    }
 }

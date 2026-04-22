@@ -135,7 +135,6 @@ Route::prefix('cp')->group(function () {
  */
 Route::middleware('client.auth')->group(function () {
     Route::get('/client-auth/me', [ClientAuthController::class, 'me']);
-    Route::post('/client-auth/logout', [ClientAuthController::class, 'logout']);
     Route::get('/shell/games', [ShellGameController::class, 'index']);
     Route::get('/client/game-profiles', [ClientGameProfileController::class, 'index']);
     Route::get('/client/game-profiles/{gameSlug}', [ClientGameProfileController::class, 'show']);
@@ -420,7 +419,7 @@ Route::prefix('owner-mobile')->group(function () {
  * Admin/Owner only
  * -----------------------------------
  */
-Route::middleware(['auth:sanctum','require.role:admin,owner'])->group(function () {
+Route::middleware(['auth:operator','require.role:admin,owner'])->group(function () {
 
     // Operators
     Route::get('/operators', [OperatorController::class,'index']);

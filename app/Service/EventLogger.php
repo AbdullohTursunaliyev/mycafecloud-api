@@ -1,8 +1,6 @@
 <?php
 namespace App\Service;
 
-use App\Models\Event;
-
 class EventLogger
 {
     public static function log(
@@ -13,13 +11,13 @@ class EventLogger
         int $entityId,
         array $payload = []
     ): void {
-        Event::create([
-            'tenant_id' => $tenantId,
-            'type' => $type,
-            'source' => $source,
-            'entity_type' => $entityType,
-            'entity_id' => $entityId,
-            'payload' => $payload ?: null,
-        ]);
+        app(\App\Services\EventLogger::class)->log(
+            $tenantId,
+            $type,
+            $source,
+            $entityType,
+            $entityId,
+            $payload,
+        );
     }
 }

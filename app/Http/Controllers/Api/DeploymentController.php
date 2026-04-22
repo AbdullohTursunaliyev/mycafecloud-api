@@ -2,145 +2,65 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Actions\Deployment\CreateBulkQuickInstallAction;
+use App\Actions\Deployment\CreateQuickInstallAction;
+use App\Enums\PcCommandType;
+use App\Enums\PcStatus;
 use App\Http\Controllers\Controller;
-use App\Models\Pc;
+use App\Http\Requests\Api\BulkQuickInstallRequest;
+use App\Http\Requests\Api\QuickInstallRequest;
 use App\Models\PcCommand;
 use App\Models\PcPairCode;
-use App\Models\Zone;
-use App\Service\SettingService;
+use App\Http\Resources\Deployment\BulkQuickInstallResource;
+use App\Http\Resources\Deployment\QuickInstallResource;
+use App\Services\DeploymentScriptService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class DeploymentController extends Controller
 {
-    private const ROLLOUT_TYPES = [
-        'LOCK',
-        'UNLOCK',
-        'REBOOT',
-        'SHUTDOWN',
-        'MESSAGE',
-        'INSTALL_GAME',
-        'UPDATE_GAME',
-        'ROLLBACK_GAME',
-        'UPDATE_SHELL',
-        'RUN_SCRIPT',
-        'APPLY_CLOUD_PROFILE',
-        'BACKUP_CLOUD_PROFILE',
-    ];
-
-    private const ONLINE_STATUSES = [
-        'online',
-        'busy',
-        'reserved',
-        'locked',
-        'maintenance',
-    ];
-
-    public function quickInstall(Request $request)
-    {
-        $tenantId = (int)$request->user()->tenant_id;
-
-        $data = $request->validate([
-            'zone_id' => ['nullable', 'integer'],
-            'zone' => ['nullable', 'string', 'max:32'],
-            'expires_in_min' => ['nullable', 'integer', 'min:1', 'max:120'],
-        ]);
-
-        $zoneName = $data['zone'] ?? null;
-        if (!$zoneName && !empty($data['zone_id'])) {
-            $zoneName = Zone::query()
-                ->where('tenant_id', $tenantId)
-                ->where('id', (int)$data['zone_id'])
-                ->value('name');
-        }
-
-        $pair = $this->createPairCodeRecord(
-            $tenantId,
-            $zoneName,
-            (int)($data['expires_in_min'] ?? 10)
-        );
-
-        $baseUrl = rtrim((string)(config('app.url') ?: $request->getSchemeAndHttpHost()), '/');
-        $apiBase = $baseUrl . '/api';
-        $script = $this->buildInstallerScript(
-            $apiBase,
-            $pair->code,
-            $request->user()->tenant_id
-        );
-        $scriptUrl = $apiBase . '/deployment/quick-install/' . urlencode($pair->code) . '/script.ps1';
-        $gpoUrl = $apiBase . '/deployment/quick-install/' . urlencode($pair->code) . '/gpo.ps1';
-
-        return response()->json([
-            'data' => [
-                'pair_code' => $pair->code,
-                'zone' => $pair->zone,
-                'expires_at' => $pair->expires_at->toIso8601String(),
-                'pair_endpoint' => $apiBase . '/agent/pair',
-                'installer_script_url' => $scriptUrl,
-                'install_one_liner' => $this->buildInstallOneLiner($scriptUrl),
-                'gpo_script_url' => $gpoUrl,
-                'gpo_one_liner' => $this->buildInstallOneLiner($gpoUrl),
-                'installer_script' => $script,
-                'quick_test_curl' => sprintf(
-                    "curl -X POST \"%s/agent/pair\" -H \"Content-Type: application/json\" -d '{\"pair_code\":\"%s\",\"pc_name\":\"TEST-PC\"}'",
-                    $apiBase,
-                    $pair->code
-                ),
-                'powershell_example' => sprintf(
-                    '$server="%s"; $code="%s"; $payload=@{pair_code=$code; pc_name=$env:COMPUTERNAME} | ConvertTo-Json; Invoke-RestMethod -Method Post -Uri "$server/agent/pair" -ContentType "application/json" -Body $payload',
-                    $apiBase,
-                    $pair->code
-                ),
-            ],
-        ], 201);
+    public function __construct(
+        private readonly CreateQuickInstallAction $createQuickInstall,
+        private readonly CreateBulkQuickInstallAction $createBulkQuickInstall,
+        private readonly DeploymentScriptService $scripts,
+    ) {
     }
 
-    public function quickInstallBulk(Request $request)
+    public function quickInstall(QuickInstallRequest $request)
     {
-        $tenantId = (int)$request->user()->tenant_id;
+        $tenantId = (int) $request->user()->tenant_id;
 
-        $data = $request->validate([
-            'count' => ['required', 'integer', 'min:1', 'max:300'],
-            'zone_id' => ['nullable', 'integer'],
-            'zone' => ['nullable', 'string', 'max:32'],
-            'expires_in_min' => ['nullable', 'integer', 'min:1', 'max:120'],
-        ]);
+        $result = $this->createQuickInstall->execute(
+            tenantId: $tenantId,
+            baseUrl: (string) (config('app.url') ?: $request->getSchemeAndHttpHost()),
+            pcId: $request->pcId(),
+            zoneId: $request->zoneId(),
+            zoneName: $request->zoneName(),
+            expiresInMin: $request->expiresInMin(),
+        );
 
-        $zoneName = $data['zone'] ?? null;
-        if (!$zoneName && !empty($data['zone_id'])) {
-            $zoneName = Zone::query()
-                ->where('tenant_id', $tenantId)
-                ->where('id', (int)$data['zone_id'])
-                ->value('name');
-        }
+        return (new QuickInstallResource($result))
+            ->response()
+            ->setStatusCode(201);
+    }
 
-        $expiresInMin = (int)($data['expires_in_min'] ?? 10);
-        $count = (int)$data['count'];
-        $baseUrl = rtrim((string)(config('app.url') ?: $request->getSchemeAndHttpHost()), '/');
-        $apiBase = $baseUrl . '/api';
+    public function quickInstallBulk(BulkQuickInstallRequest $request)
+    {
+        $tenantId = (int) $request->user()->tenant_id;
 
-        $codes = [];
-        for ($i = 0; $i < $count; $i++) {
-            $pair = $this->createPairCodeRecord($tenantId, $zoneName, $expiresInMin);
-            $codes[] = [
-                'pair_code' => $pair->code,
-                'zone' => $pair->zone,
-                'expires_at' => $pair->expires_at->toIso8601String(),
-            ];
-        }
+        $result = $this->createBulkQuickInstall->execute(
+            tenantId: $tenantId,
+            baseUrl: (string) (config('app.url') ?: $request->getSchemeAndHttpHost()),
+            count: $request->countValue(),
+            zoneId: $request->zoneId(),
+            zoneName: $request->zoneName(),
+            expiresInMin: $request->expiresInMin(),
+        );
 
-        return response()->json([
-            'data' => [
-                'count' => count($codes),
-                'codes' => $codes,
-                'installer_script_url_pattern' => $apiBase . '/deployment/quick-install/{PAIR_CODE}/script.ps1',
-                'install_one_liner_pattern' => $this->buildInstallOneLiner($apiBase . '/deployment/quick-install/{PAIR_CODE}/script.ps1'),
-                'gpo_script_url_pattern' => $apiBase . '/deployment/quick-install/{PAIR_CODE}/gpo.ps1',
-                'gpo_one_liner_pattern' => $this->buildInstallOneLiner($apiBase . '/deployment/quick-install/{PAIR_CODE}/gpo.ps1'),
-            ],
-        ], 201);
+        return (new BulkQuickInstallResource($result))
+            ->response()
+            ->setStatusCode(201);
     }
 
     public function pairCodes(Request $request)
@@ -216,60 +136,51 @@ class DeploymentController extends Controller
 
     public function installerScript(Request $request, string $code)
     {
-        $tenantId = (int)$request->user()->tenant_id;
-        $pair = $this->findValidPairCode($code);
-        if ((int)$pair->tenant_id !== $tenantId) {
-            throw ValidationException::withMessages([
-                'code' => 'Pair code does not belong to current tenant.',
-            ]);
-        }
+        $payload = $this->scripts->buildPrivateInstallerScript(
+            (int) $request->user()->tenant_id,
+            $code,
+            (string) (config('app.url') ?: $request->getSchemeAndHttpHost()),
+        );
 
-        $baseUrl = rtrim((string)(config('app.url') ?: $request->getSchemeAndHttpHost()), '/');
-        $apiBase = $baseUrl . '/api';
-        $script = $this->buildInstallerScript($apiBase, $pair->code, $tenantId);
-
-        return response($script, 200, [
+        return response($payload['script'], 200, [
             'Content-Type' => 'text/plain; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="mycafecloud-install-' . strtolower($pair->code) . '.ps1"',
+            'Content-Disposition' => 'attachment; filename="' . $payload['filename'] . '"',
         ]);
     }
 
     public function publicInstallerScript(Request $request, string $code)
     {
-        $pair = $this->findValidPairCode($code);
+        $payload = $this->scripts->buildPublicInstallerScript(
+            $code,
+            (string) (config('app.url') ?: $request->getSchemeAndHttpHost()),
+        );
 
-        $baseUrl = rtrim((string)(config('app.url') ?: $request->getSchemeAndHttpHost()), '/');
-        $apiBase = $baseUrl . '/api';
-        $script = $this->buildInstallerScript($apiBase, $pair->code, (int)$pair->tenant_id);
-
-        return response($script, 200, [
+        return response($payload['script'], 200, [
             'Content-Type' => 'text/plain; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="mycafecloud-install-' . strtolower($pair->code) . '.ps1"',
+            'Content-Disposition' => 'attachment; filename="' . $payload['filename'] . '"',
         ]);
     }
 
     public function publicGpoScript(Request $request, string $code)
     {
-        $pair = $this->findValidPairCode($code);
+        $payload = $this->scripts->buildPublicGpoScript(
+            $code,
+            (string) (config('app.url') ?: $request->getSchemeAndHttpHost()),
+        );
 
-        $baseUrl = rtrim((string)(config('app.url') ?: $request->getSchemeAndHttpHost()), '/');
-        $apiBase = $baseUrl . '/api';
-        $scriptUrl = $apiBase . '/deployment/quick-install/' . urlencode($pair->code) . '/script.ps1';
-        $script = $this->buildGpoScript($scriptUrl);
-
-        return response($script, 200, [
+        return response($payload['script'], 200, [
             'Content-Type' => 'text/plain; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="mycafecloud-gpo-' . strtolower($pair->code) . '.ps1"',
+            'Content-Disposition' => 'attachment; filename="' . $payload['filename'] . '"',
         ]);
     }
 
     public function rollout(Request $request)
     {
         $tenantId = (int)$request->user()->tenant_id;
-        $hasBatchColumn = $this->hasBatchIdColumn();
+        $onlineStatuses = $this->onlineStatuses();
 
         $data = $request->validate([
-            'type' => ['required', 'string', 'in:' . implode(',', self::ROLLOUT_TYPES)],
+            'type' => ['required', 'string', 'in:' . implode(',', PcCommandType::rolloutValues())],
             'payload' => ['nullable', 'array'],
             'target_mode' => ['required', 'string', 'in:all,online,zone,selected'],
             'pc_ids' => ['nullable', 'array', 'max:2000'],
@@ -295,13 +206,13 @@ class DeploymentController extends Controller
             }
             $query->whereIn('id', $pcIds);
         } elseif ($mode === 'online') {
-            $query->whereIn('status', self::ONLINE_STATUSES);
+            $query->whereIn('status', $onlineStatuses);
         }
 
         $onlyOnline = (bool)($data['only_online'] ?? true);
         if ($onlyOnline) {
-            $query->whereIn('status', self::ONLINE_STATUSES)
-                ->where('last_seen_at', '>=', now()->subMinutes(10));
+            $query->whereIn('status', $onlineStatuses)
+                ->where('last_seen_at', '>=', now()->subMinutes((int) config('domain.pc.online_window_minutes', 3)));
         }
 
         $limit = isset($data['limit']) ? (int)$data['limit'] : null;
@@ -331,14 +242,15 @@ class DeploymentController extends Controller
             ]);
         }
 
-        $batchId = $hasBatchColumn ? (string) Str::ulid() : null;
+        $batchId = (string) Str::ulid();
         $now = now();
         $payload = $data['payload'] ?? null;
 
-        $rows = $targets->map(function ($pc) use ($tenantId, $batchId, $data, $payload, $now, $hasBatchColumn) {
-            $row = [
+        $rows = $targets->map(function ($pc) use ($tenantId, $batchId, $data, $payload, $now) {
+            return [
                 'tenant_id' => $tenantId,
                 'pc_id' => (int)$pc->id,
+                'batch_id' => $batchId,
                 'type' => $data['type'],
                 'payload' => $payload,
                 'status' => 'pending',
@@ -348,12 +260,6 @@ class DeploymentController extends Controller
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-
-            if ($hasBatchColumn) {
-                $row['batch_id'] = $batchId;
-            }
-
-            return $row;
         })->all();
 
         PcCommand::insert($rows);
@@ -364,7 +270,7 @@ class DeploymentController extends Controller
                 'type' => $data['type'],
                 'count' => count($rows),
                 'target_mode' => $mode,
-                'batch_supported' => $hasBatchColumn,
+                'batch_supported' => true,
             ],
         ], 201);
     }
@@ -373,15 +279,6 @@ class DeploymentController extends Controller
     {
         $tenantId = (int)$request->user()->tenant_id;
         $limit = max(1, min((int)$request->query('limit', 20), 100));
-        if (!$this->hasBatchIdColumn()) {
-            return response()->json([
-                'data' => [],
-                'meta' => [
-                    'batch_supported' => false,
-                    'message' => 'batch_id column missing. Run migrations.',
-                ],
-            ]);
-        }
 
         $rows = PcCommand::query()
             ->where('tenant_id', $tenantId)
@@ -408,11 +305,6 @@ class DeploymentController extends Controller
     public function batchStatus(Request $request, string $batchId)
     {
         $tenantId = (int)$request->user()->tenant_id;
-        if (!$this->hasBatchIdColumn()) {
-            return response()->json([
-                'message' => 'batch_id column missing. Run migrations.',
-            ], 409);
-        }
 
         $base = PcCommand::query()
             ->where('tenant_id', $tenantId)
@@ -462,12 +354,6 @@ class DeploymentController extends Controller
     public function retryFailed(Request $request, string $batchId)
     {
         $tenantId = (int)$request->user()->tenant_id;
-        if (!$this->hasBatchIdColumn()) {
-            return response()->json([
-                'message' => 'batch_id column missing. Run migrations.',
-            ], 409);
-        }
-
         $failed = PcCommand::query()
             ->where('tenant_id', $tenantId)
             ->where('batch_id', $batchId)
@@ -508,231 +394,8 @@ class DeploymentController extends Controller
         ], 201);
     }
 
-    private function generatePairCode(): string
+    private function onlineStatuses(): array
     {
-        do {
-            $code = Str::upper(Str::random(4)) . '-' . Str::upper(Str::random(2));
-        } while (PcPairCode::query()->where('code', $code)->exists());
-
-        return $code;
-    }
-
-    private function createPairCodeRecord(int $tenantId, ?string $zoneName, int $expiresInMin): PcPairCode
-    {
-        return PcPairCode::create([
-            'tenant_id' => $tenantId,
-            'code' => $this->generatePairCode(),
-            'zone' => $zoneName,
-            'expires_at' => now()->addMinutes($expiresInMin),
-        ]);
-    }
-
-    private function buildInstallerScript(string $apiBase, string $pairCode, int $tenantId): string
-    {
-        $downloadUrl = trim((string)SettingService::get($tenantId, 'deploy_agent_download_url', ''));
-        $installArgs = trim((string)SettingService::get($tenantId, 'deploy_agent_install_args', '--install SERVER_URL="{SERVER}" PAIR_CODE="{PAIR_CODE}"'));
-        $clientUrl = trim((string)SettingService::get($tenantId, 'deploy_client_download_url', ''));
-        $clientArgs = trim((string)SettingService::get($tenantId, 'deploy_client_install_args', ''));
-        $shellUrl = trim((string)SettingService::get($tenantId, 'deploy_shell_download_url', ''));
-        $shellArgs = trim((string)SettingService::get($tenantId, 'deploy_shell_install_args', '/quiet SERVER_URL="{SERVER}"'));
-        $shellAutoStartEnabled = SettingService::get($tenantId, 'shell_autostart_enabled', false) ? '1' : '0';
-        $shellAutoStartPath = trim((string)SettingService::get($tenantId, 'shell_autostart_path', ''));
-        $shellAutoStartArgs = trim((string)SettingService::get($tenantId, 'shell_autostart_args', ''));
-        $shellAutoStartScope = trim((string)SettingService::get($tenantId, 'shell_autostart_scope', 'machine'));
-
-        $shellReplaceEnabled = SettingService::get($tenantId, 'shell_replace_explorer_enabled', false) ? '1' : '0';
-        $shellReplacePath = trim((string)SettingService::get($tenantId, 'shell_replace_explorer_path', ''));
-        $shellReplaceArgs = trim((string)SettingService::get($tenantId, 'shell_replace_explorer_args', ''));
-
-        $downloadLine = '$agentUrl = ""';
-        if ($downloadUrl !== '') {
-            $downloadLine = '$agentUrl = "' . addslashes($downloadUrl) . '"';
-        }
-
-        $shellLine = '$shellUrl = ""';
-        if ($shellUrl !== '') {
-            $shellLine = '$shellUrl = "' . addslashes($shellUrl) . '"';
-        }
-
-        $installArgs = str_replace(
-            ['{SERVER}', '{PAIR_CODE}'],
-            [$apiBase, $pairCode],
-            $installArgs
-        );
-        if ($clientArgs === '') {
-            $clientArgs = 'SERVER_URL="{SERVER}" PAIR_CODE="{PAIR_CODE}" AGENT_URL="{AGENT_URL}" SHELL_URL="{SHELL_URL}" AUTOSTART={AUTOSTART} AUTOSTART_PATH="{AUTOSTART_PATH}" AUTOSTART_ARGS="{AUTOSTART_ARGS}" AUTOSTART_SCOPE="{AUTOSTART_SCOPE}" REPLACE_SHELL={REPLACE_SHELL} REPLACE_SHELL_PATH="{REPLACE_SHELL_PATH}" REPLACE_SHELL_ARGS="{REPLACE_SHELL_ARGS}"';
-        }
-        $clientArgs = str_replace(
-            ['{SERVER}', '{PAIR_CODE}', '{AGENT_URL}', '{SHELL_URL}', '{AUTOSTART}', '{AUTOSTART_PATH}', '{AUTOSTART_ARGS}', '{AUTOSTART_SCOPE}', '{REPLACE_SHELL}', '{REPLACE_SHELL_PATH}', '{REPLACE_SHELL_ARGS}'],
-            [$apiBase, $pairCode, $downloadUrl, $shellUrl, $shellAutoStartEnabled, $shellAutoStartPath, $shellAutoStartArgs, $shellAutoStartScope, $shellReplaceEnabled, $shellReplacePath, $shellReplaceArgs],
-            $clientArgs
-        );
-        $shellArgs = str_replace(
-            ['{SERVER}', '{PAIR_CODE}'],
-            [$apiBase, $pairCode],
-            $shellArgs
-        );
-
-        return <<<PS1
-\$ErrorActionPreference = "Stop"
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-\$server = "{$apiBase}"
-\$pairCode = "{$pairCode}"
-{$downloadLine}
-\$shellArgs = '{$shellArgs}'
-{$shellLine}
-\$clientUrl = "{$clientUrl}"
-\$clientArgs = '{$clientArgs}'
-\$autoStartEnabled = '{$shellAutoStartEnabled}'
-\$autoStartPath = "{$shellAutoStartPath}"
-\$autoStartArgs = "{$shellAutoStartArgs}"
-\$autoStartScope = "{$shellAutoStartScope}"
-\$replaceShellEnabled = "{$shellReplaceEnabled}"
-\$replaceShellPath = "{$shellReplacePath}"
-\$replaceShellArgs = "{$shellReplaceArgs}"
-\$installerArgs = '{$installArgs}'
-
-Write-Host "MyCafeCloud quick install started..." -ForegroundColor Cyan
-Write-Host "Server: \$server"
-Write-Host "Pair code: \$pairCode"
-
-if (\$clientUrl -ne "") {
-    \$tmpc = Join-Path \$env:TEMP "mycafecloud-client-setup.exe"
-    Write-Host "Downloading client from \$clientUrl ..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri \$clientUrl -OutFile \$tmpc -UseBasicParsing
-    Write-Host "Running client installer..." -ForegroundColor Yellow
-    Start-Process -FilePath \$tmpc -ArgumentList \$clientArgs -Wait
-} else {
-    if (\$agentUrl -ne "") {
-        \$tmp = Join-Path \$env:TEMP "mycafecloud-agent-setup.exe"
-        Write-Host "Downloading agent from \$agentUrl ..." -ForegroundColor Yellow
-        Invoke-WebRequest -Uri \$agentUrl -OutFile \$tmp -UseBasicParsing
-        Write-Host "Running installer..." -ForegroundColor Yellow
-        Start-Process -FilePath \$tmp -ArgumentList \$installerArgs -Wait
-    }
-
-    if (\$shellUrl -ne "") {
-        \$tmp2 = Join-Path \$env:TEMP "mycafecloud-shell-setup.exe"
-        Write-Host "Downloading shell from \$shellUrl ..." -ForegroundColor Yellow
-        Invoke-WebRequest -Uri \$shellUrl -OutFile \$tmp2 -UseBasicParsing
-        Write-Host "Running shell installer..." -ForegroundColor Yellow
-        Start-Process -FilePath \$tmp2 -ArgumentList \$shellArgs -Wait
-    }
-}
-
-if (\$autoStartEnabled -eq "1" -and \$autoStartPath -ne "") {
-    try {
-        \$cmd = ('"' + \$autoStartPath + '" ' + \$autoStartArgs).Trim()
-        if (\$autoStartScope -eq "machine") {
-            New-Item -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Force | Out-Null
-            Set-ItemProperty -Path "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "MyCafeCloudShell" -Value \$cmd
-        } else {
-            New-Item -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Force | Out-Null
-            Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "MyCafeCloudShell" -Value \$cmd
-        }
-        Write-Host "Shell autostart configured." -ForegroundColor Green
-    } catch {
-        Write-Host "Shell autostart failed: \$($_.Exception.Message)" -ForegroundColor Red
-    }
-}
-
-if (\$replaceShellEnabled -eq "1" -and \$replaceShellPath -ne "") {
-    try {
-        \$shellCmd = ('"' + \$replaceShellPath + '" ' + \$replaceShellArgs).Trim()
-        New-Item -Path "HKLM:\\SOFTWARE\\MyCafeCloud" -Force | Out-Null
-        \$prev = (Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" -Name "Shell" -ErrorAction SilentlyContinue).Shell
-        if (\$prev) { Set-ItemProperty -Path "HKLM:\\SOFTWARE\\MyCafeCloud" -Name "PrevShell" -Value \$prev }
-        Set-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" -Name "Shell" -Value \$shellCmd
-        Write-Host "Windows shell replaced." -ForegroundColor Yellow
-    } catch {
-        Write-Host "Shell replace failed: \$($_.Exception.Message)" -ForegroundColor Red
-    }
-}
-
-\$payload = @{
-    pair_code = \$pairCode
-    pc_name   = \$env:COMPUTERNAME
-} | ConvertTo-Json
-
-try {
-    \$resp = Invoke-RestMethod -Method Post -Uri "\$server/agent/pair" -ContentType "application/json" -Body \$payload
-    Write-Host "Pair success: \$((\$resp.pc.code))" -ForegroundColor Green
-} catch {
-    Write-Host "Pair failed: \$($_.Exception.Message)" -ForegroundColor Red
-    throw
-}
-PS1;
-    }
-
-    private function findValidPairCode(string $code): PcPairCode
-    {
-        $code = strtoupper(trim($code));
-        if (!preg_match('/^[A-Z0-9]{4}-[A-Z0-9]{2}$/', $code)) {
-            throw ValidationException::withMessages([
-                'code' => 'Invalid pair code format.',
-            ]);
-        }
-
-        $pair = PcPairCode::query()->where('code', $code)->firstOrFail();
-        if ($pair->used_at) {
-            throw ValidationException::withMessages([
-                'code' => 'Pair code already used.',
-            ]);
-        }
-        if ($pair->expires_at && $pair->expires_at->lte(now())) {
-            throw ValidationException::withMessages([
-                'code' => 'Pair code expired.',
-            ]);
-        }
-
-        return $pair;
-    }
-
-    private function buildInstallOneLiner(string $scriptUrl): string
-    {
-        return 'powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing -Uri \'' . $scriptUrl . '\' | iex"';
-    }
-
-    private function buildGpoScript(string $scriptUrl): string
-    {
-        return <<<PS1
-\$ErrorActionPreference = "Stop"
-\$logDir = "C:\\ProgramData\\MyCafeCloud"
-\$logFile = Join-Path \$logDir "gpo_install.log"
-if (!(Test-Path \$logDir)) { New-Item -ItemType Directory -Path \$logDir | Out-Null }
-function Log(\$msg) {
-    \$line = ("[" + (Get-Date).ToString("s") + "] " + \$msg)
-    Add-Content -Path \$logFile -Value \$line
-}
-
-try {
-    \$svc = Get-Service -Name "MyCafeCloudAgent" -ErrorAction SilentlyContinue
-    if (\$svc) {
-        Log "Agent already installed. Exit."
-        exit 0
-    }
-} catch {}
-
-\$url = "{$scriptUrl}"
-for (\$i = 1; \$i -le 3; \$i++) {
-    try {
-        Log "Running quick install attempt \$i..."
-        iwr -UseBasicParsing -Uri \$url | iex
-        Log "Quick install completed."
-        exit 0
-    } catch {
-        Log "Attempt \$i failed: \$($_.Exception.Message)"
-        Start-Sleep -Seconds 5
-    }
-}
-
-throw "GPO install failed after 3 attempts."
-PS1;
-    }
-
-    private function hasBatchIdColumn(): bool
-    {
-        return Schema::hasColumn('pc_commands', 'batch_id');
+        return PcStatus::onlineValues();
     }
 }

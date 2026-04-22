@@ -14,7 +14,7 @@ class ClientTierService
      * - client->lifetime_topup yangilangan bo'lishi kerak.
      * - upgrade bo'lsa: client bonusiga tier bonus qo'shadi va transaction yozadi.
      */
-    public static function recalcAndApplyUpgradeBonus(
+    public function recalculateAndApplyUpgradeBonus(
         Client $client,
         int $tenantId,
         int $operatorId,
@@ -83,5 +83,21 @@ class ClientTierService
         }
 
         return ['changed' => true, 'bonus' => $bonus, 'tier' => $newTier];
+    }
+
+    public static function recalcAndApplyUpgradeBonus(
+        Client $client,
+        int $tenantId,
+        int $operatorId,
+        ?int $shiftId,
+        Carbon $now
+    ): array {
+        return app(self::class)->recalculateAndApplyUpgradeBonus(
+            $client,
+            $tenantId,
+            $operatorId,
+            $shiftId,
+            $now
+        );
     }
 }

@@ -3,122 +3,70 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Package;
-use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
+use App\Http\Requests\Api\PackageIndexRequest;
+use App\Http\Requests\Api\StorePackageRequest;
+use App\Http\Requests\Api\UpdatePackageRequest;
+use App\Http\Resources\Admin\PackageResource;
+use App\Services\PackageCatalogService;
 
 class PackageController extends Controller
 {
-    private function tenantId(): int
-    {
-        $op = auth('operator')->user();
-        return (int)($op->tenant_id ?? 0);
+    public function __construct(
+        private readonly PackageCatalogService $packages,
+    ) {
     }
 
-    public function index(Request $request)
+    public function index(PackageIndexRequest $request)
     {
-        $tenantId = $this->tenantId();
-
-        $q = trim((string)$request->query('q', ''));
-        $active = $request->query('active', null); // "true" | "false" | null
-        $perPage = (int)($request->query('per_page', 20));
-        $perPage = max(1, min($perPage, 100));
-
-        $query = Package::query()
-            ->where('tenant_id', $tenantId);
-
-        if ($q !== '') {
-            // PostgreSQL bo'lsa ILIKE, bo'lmasa LIKE
-            $driver = \DB::getDriverName();
-            if ($driver === 'pgsql') {
-                $query->where('name', 'ILIKE', '%' . $q . '%');
-            } else {
-                $query->where('name', 'LIKE', '%' . $q . '%');
-            }
-        }
-
-        if ($active !== null && $active !== '') {
-            $bool = filter_var($active, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-            if ($bool !== null) {
-                $query->where('is_active', $bool);
-            }
-        }
-
-        $query->orderByDesc('is_active')->orderByDesc('id');
-
-        // paginate frontga qulay
-        $pag = $query->paginate($perPage);
+        $operator = $request->user('operator');
+        $packages = $this->packages->paginate(
+            (int) $operator->tenant_id,
+            $request->filters(),
+            $request->perPage(),
+        );
+        $packages->setCollection(
+            collect(PackageResource::collection($packages->getCollection())->resolve())
+        );
 
         return response()->json([
-            'data' => $pag,
+            'data' => $packages,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StorePackageRequest $request)
     {
-        $tenantId = $this->tenantId();
-
-        $data = $request->validate([
-            'name' => ['required', 'string', 'min:2', 'max:255'],
-            'duration_min' => ['required', 'integer', 'min:1', 'max:1000000'],
-            'price' => ['required', 'integer', 'min:0', 'max:2000000000'],
-            'zone' => ['nullable', 'string', 'max:255'],
-            'is_active' => ['nullable', 'boolean'],
-        ]);
-
-        $pkg = Package::create([
-            'tenant_id' => $tenantId,
-            'name' => $data['name'],
-            'duration_min' => (int)$data['duration_min'],
-            'price' => (int)$data['price'],
-            'zone' => $data['zone'] ?? null,
-            'is_active' => array_key_exists('is_active', $data) ? (bool)$data['is_active'] : true,
-        ]);
+        $operator = $request->user('operator');
+        $package = $this->packages->create(
+            (int) $operator->tenant_id,
+            $request->payload(),
+        );
 
         return response()->json([
-            'data' => $pkg,
+            'data' => (new PackageResource($package))->resolve(),
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdatePackageRequest $request, int $id)
     {
-        $tenantId = $this->tenantId();
-
-        $pkg = Package::query()
-            ->where('tenant_id', $tenantId)
-            ->where('id', $id)
-            ->firstOrFail();
-
-        $data = $request->validate([
-            'name' => ['sometimes', 'required', 'string', 'min:2', 'max:255'],
-            'duration_min' => ['sometimes', 'required', 'integer', 'min:1', 'max:1000000'],
-            'price' => ['sometimes', 'required', 'integer', 'min:0', 'max:2000000000'],
-            'zone' => ['sometimes', 'nullable', 'string', 'max:255'],
-            'is_active' => ['sometimes', 'boolean'],
-        ]);
-
-        $pkg->fill($data);
-        $pkg->save();
+        $operator = $request->user('operator');
+        $package = $this->packages->update(
+            (int) $operator->tenant_id,
+            $id,
+            $request->payload(),
+        );
 
         return response()->json([
-            'data' => $pkg,
+            'data' => (new PackageResource($package))->resolve(),
         ]);
     }
 
-    public function toggle($id)
+    public function toggle(int $id)
     {
-        $tenantId = $this->tenantId();
-
-        $pkg = Package::query()
-            ->where('tenant_id', $tenantId)
-            ->where('id', $id)
-            ->firstOrFail();
-
-        $pkg->is_active = !$pkg->is_active;
-        $pkg->save();
+        $tenantId = (int) (auth('operator')->user()?->tenant_id ?? 0);
+        $package = $this->packages->toggle($tenantId, $id);
 
         return response()->json([
-            'data' => $pkg,
+            'data' => (new PackageResource($package))->resolve(),
         ]);
     }
 }

@@ -3,94 +3,43 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\LicenseKey;
-use App\Models\Operator;
-use Carbon\Carbon;
+use App\Http\Requests\Api\OwnerMobileLoginRequest;
+use App\Http\Resources\OwnerMobile\OwnerMobileLoginResource;
+use App\Http\Resources\OwnerMobile\OwnerMobileMeResource;
+use App\Services\OwnerMobileAuthService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
 
 class OwnerMobileAuthController extends Controller
 {
-    public function login(Request $request)
+    public function __construct(
+        private readonly OwnerMobileAuthService $auth,
+    ) {
+    }
+
+    public function login(OwnerMobileLoginRequest $request)
     {
-        $data = $request->validate([
-            'license_key' => ['required','string'],
-            'login'       => ['required','string'],
-            'password'    => ['required','string'],
-        ]);
+        $payload = $this->auth->login(
+            $request->licenseKey(),
+            $request->loginValue(),
+            $request->passwordValue(),
+        );
 
-        $license = LicenseKey::with('tenant')
-            ->where('key', $data['license_key'])
-            ->first();
-
-        if (!$license || $license->status !== 'active') {
-            throw ValidationException::withMessages(['license_key' => 'Лицензия недействительна']);
-        }
-
-        if ($license->expires_at && $license->expires_at->lte(Carbon::now())) {
-            throw ValidationException::withMessages(['license_key' => 'Лицензия истекла']);
-        }
-
-        if ($license->tenant?->status !== 'active') {
-            throw ValidationException::withMessages(['license_key' => 'Клуб заблокирован']);
-        }
-
-        $operator = Operator::where('tenant_id', $license->tenant_id)
-            ->where('login', $data['login'])
-            ->where('is_active', true)
-            ->first();
-
-        if (!$operator || !Hash::check($data['password'], $operator->password)) {
-            throw ValidationException::withMessages(['login' => 'Неверный логин или пароль']);
-        }
-
-        if ($operator->role !== 'owner') {
-            throw ValidationException::withMessages(['login' => 'Доступ только для владельца']);
-        }
-
-        // clear old tokens
-        $operator->tokens()->delete();
-
-        $token = $operator->createToken('owner-mobile', [
-            'tenant:'.$operator->tenant_id,
-            'role:'.$operator->role,
-        ])->plainTextToken;
-
-        $license->update(['last_used_at' => now()]);
-
-        return response()->json([
-            'token' => $token,
-            'tenant' => [
-                'id' => $license->tenant->id,
-                'name' => $license->tenant->name,
-            ],
-            'operator' => [
-                'id' => $operator->id,
-                'name' => $operator->name,
-                'role' => $operator->role,
-            ],
-        ]);
+        return response()->json(
+            (new OwnerMobileLoginResource($payload))->resolve()
+        );
     }
 
     public function me(Request $request)
     {
-        /** @var \App\Models\Operator $op */
-        $op = $request->user();
-        return response()->json([
-            'operator' => [
-                'id' => $op->id,
-                'name' => $op->name,
-                'login' => $op->login,
-                'role' => $op->role,
-                'tenant_id' => $op->tenant_id,
-            ],
-        ]);
+        return response()->json(
+            (new OwnerMobileMeResource($request->user()))->resolve()
+        );
     }
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()?->delete();
+        $request->user()->tokens()->delete();
+
         return response()->json(['ok' => true]);
     }
 }

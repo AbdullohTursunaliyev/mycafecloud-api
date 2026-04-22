@@ -2,30 +2,35 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Actions\Agent\PairPcAction;
+use App\Enums\PcStatus;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\AgentPairRequest;
+use App\Http\Resources\Agent\AgentPairResource;
+use App\Http\Resources\Agent\AgentPollResource;
+use App\Http\Resources\Agent\AgentSettingsResource;
 use App\Models\Pc;
 use App\Models\PcCommand;
-use App\Models\PcDeviceToken;
 use App\Models\PcHeartbeat;
 use App\Models\PcPairCode;
-use App\Models\Zone;
+use App\Services\AgentInstallerBuilder;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class AgentController extends Controller
 {
+    public function __construct(
+        private readonly PairPcAction $pairPc,
+        private readonly AgentInstallerBuilder $installerBuilder,
+    ) {
+    }
+
     // 4.1 Pair: agent birinchi marta keladi (pair_code bilan)
-    public function pair(Request $request)
+    public function pair(AgentPairRequest $request)
     {
-        $data = $request->validate([
-            'pair_code' => ['required','string'],
-            'pc_name'   => ['nullable','string','max:64'],
-            'ip'        => ['nullable','ip'],
-            'mac'       => ['nullable','string','max:32'],
-            'os'        => ['nullable','string','max:64'],
-        ]);
+        $data = $request->payload();
 
         $pair = PcPairCode::where('code', $data['pair_code'])->first();
 
@@ -39,54 +44,9 @@ class AgentController extends Controller
             throw ValidationException::withMessages(['pair_code' => 'Код истёк']);
         }
 
-        // PC yaratamiz (code avtomatik)
-        $pcCode = $data['pc_name'] ?: ('PC-' . Str::upper(Str::random(4)));
-
-        // tenant ichida unikallik uchun:
-        $base = $pcCode;
-        $i = 1;
-        while (Pc::where('tenant_id', $pair->tenant_id)->where('code', $pcCode)->exists()) {
-            $pcCode = $base . '-' . $i++;
-        }
-
-        $zoneId = null;
-        if ($pair->zone) {
-            $zoneId = Zone::query()
-                ->where('tenant_id', $pair->tenant_id)
-                ->where('name', $pair->zone)
-                ->value('id');
-        }
-
-        $pc = Pc::create([
-            'tenant_id' => $pair->tenant_id,
-            'code' => $pcCode,
-            'status' => 'online',
-            'ip_address' => $data['ip'] ?? null,
-            'last_seen_at' => now(),
-            'zone_id' => $zoneId,
-            'zone'    => $pair->zone,
-        ]);
-
-        // device token beramiz
-        $plain = Str::random(48);
-        PcDeviceToken::create([
-            'tenant_id' => $pair->tenant_id,
-            'pc_id' => $pc->id,
-            'token_hash' => hash('sha256', $plain),
-            'last_used_at' => now(),
-        ]);
-
-        $pair->update(['used_at' => now(), 'pc_id' => $pc->id]);
-
-        return response()->json([
-            'pc' => [
-                'id' => $pc->id,
-                'code' => $pc->code,
-                'zone' => $pc->zone,
-            ],
-            'device_token' => $plain,
-            'poll_interval_sec' => 3,
-        ], 201);
+        return (new AgentPairResource($this->pairPc->execute($pair, $data)))
+            ->response()
+            ->setStatusCode(201);
     }
 
     // 4.2 Heartbeat: agent doimiy yuboradi
@@ -97,7 +57,7 @@ class AgentController extends Controller
 
         $data = $request->validate([
             'ip' => ['nullable','ip'],
-            'status' => ['nullable','string','in:online,busy,locked,maintenance'],
+            'status' => ['nullable', 'string', Rule::in(PcStatus::agentReportedValues())],
             'metrics' => ['nullable','array'],
             'metrics.cpu' => ['nullable','numeric','min:0','max:100'],
             'metrics.ram' => ['nullable','numeric','min:0','max:100'],
@@ -110,7 +70,7 @@ class AgentController extends Controller
 
         // statusni agentdan to'liq berib yubormaymiz: busy ni sessiya boshqaradi
         $allowed = $data['status'] ?? null;
-        $safeStatus = in_array($allowed, ['online','locked','maintenance'], true)
+        $safeStatus = in_array($allowed, PcStatus::agentWritableValues(), true)
             ? $allowed
             : null;
 
@@ -130,7 +90,7 @@ class AgentController extends Controller
             ]);
         }
 
-        return response()->json(['ok' => true]);
+        return $this->jsonWithRotation($request, ['ok' => true]);
     }
 
     // 4.2.1 Settings for agent auto-update
@@ -138,16 +98,9 @@ class AgentController extends Controller
     {
         $tenantId = (int) $request->attributes->get('tenant_id');
 
-        return response()->json([
-            'settings' => [
-                'deploy_agent_download_url' => (string) \App\Service\SettingService::get($tenantId, 'deploy_agent_download_url', ''),
-                'deploy_agent_sha256' => (string) \App\Service\SettingService::get($tenantId, 'deploy_agent_sha256', ''),
-                'deploy_shell_download_url' => (string) \App\Service\SettingService::get($tenantId, 'deploy_shell_download_url', ''),
-                'deploy_shell_sha256' => (string) \App\Service\SettingService::get($tenantId, 'deploy_shell_sha256', ''),
-                'deploy_agent_install_args' => (string) \App\Service\SettingService::get($tenantId, 'deploy_agent_install_args', ''),
-                'deploy_shell_install_args' => (string) \App\Service\SettingService::get($tenantId, 'deploy_shell_install_args', ''),
-            ],
-        ]);
+        return new AgentSettingsResource($this->withRotationPayload($request, [
+            'settings' => $this->installerBuilder->buildAgentSettings($tenantId),
+        ]));
     }
 
     // 4.3 Poll commands (MVP): agent buyruqlarni olib turadi
@@ -167,13 +120,13 @@ class AgentController extends Controller
         PcCommand::whereIn('id', $commands->pluck('id'))
             ->update(['status' => 'sent', 'sent_at' => now()]);
 
-        return response()->json([
+        return new AgentPollResource($this->withRotationPayload($request, [
             'commands' => $commands->map(fn($c) => [
                 'id' => $c->id,
                 'type' => $c->type,
                 'payload' => $c->payload,
-            ]),
-        ]);
+            ])->values()->all(),
+        ]));
     }
 
     // 4.4 Ack
@@ -200,6 +153,24 @@ class AgentController extends Controller
                 ]);
         }
 
-        return response()->json(['ok' => true]);
+        return $this->jsonWithRotation($request, ['ok' => true]);
+    }
+
+    private function jsonWithRotation(Request $request, array $payload, int $status = 200)
+    {
+        return response()->json($this->withRotationPayload($request, $payload), $status);
+    }
+
+    private function withRotationPayload(Request $request, array $payload): array
+    {
+        $rotation = $request->attributes->get('rotated_device_token');
+        if (!is_array($rotation)) {
+            return $payload;
+        }
+
+        $payload['device_token'] = $rotation['plain'];
+        $payload['device_token_expires_at'] = optional($rotation['token']->expires_at)->toIso8601String();
+
+        return $payload;
     }
 }

@@ -3,57 +3,47 @@
 namespace App\Http\Controllers\Saas;
 
 use App\Http\Controllers\Controller;
-use App\Models\Tenant;
-use Illuminate\Http\Request;
+use App\Http\Requests\Saas\StoreTenantRequest;
+use App\Http\Requests\Saas\TenantIndexRequest;
+use App\Http\Requests\Saas\UpdateTenantRequest;
+use App\Http\Resources\Saas\TenantResource;
+use App\Services\SaasTenantService;
 
 class TenantController extends Controller
 {
-    public function index(Request $request)
-    {
-        $q = Tenant::query()->orderByDesc('id');
-
-        if ($request->filled('status')) $q->where('status', $request->string('status'));
-        if ($request->filled('search')) {
-            $s = $request->string('search');
-            $q->where('name','ILIKE',"%{$s}%");
-        }
-
-        return response()->json(['data' => $q->paginate(20)]);
+    public function __construct(
+        private readonly SaasTenantService $tenants,
+    ) {
     }
 
-    public function store(Request $request)
+    public function index(TenantIndexRequest $request)
     {
-        $data = $request->validate([
-            'name' => ['required','string','max:120'],
-            'status' => ['nullable','in:active,suspended'],
-        ]);
+        $tenants = $this->tenants->paginate($request->filters());
+        $tenants->setCollection(
+            collect(TenantResource::collection($tenants->getCollection())->resolve())
+        );
 
-        $tenant = Tenant::create([
-            'name' => $data['name'],
-            'status' => $data['status'] ?? 'active',
-        ]);
-
-        return response()->json(['data'=>$tenant], 201);
+        return response()->json(['data' => $tenants]);
     }
 
-    public function show(Request $request, int $id)
+    public function store(StoreTenantRequest $request)
     {
-        $tenant = Tenant::withCount(['licenseKeys'])->findOrFail($id);
-        return response()->json(['data'=>$tenant]);
+        return response()->json([
+            'data' => new TenantResource($this->tenants->create($request->payload())),
+        ], 201);
     }
 
-    public function update(Request $request, int $id)
+    public function show(int $id)
     {
-        $tenant = Tenant::findOrFail($id);
-
-        $data = $request->validate([
-            'name' => ['sometimes','string','max:120'],
-            'status' => ['sometimes','in:active,suspended'],
+        return response()->json([
+            'data' => new TenantResource($this->tenants->show($id)),
         ]);
+    }
 
-        $tenant->fill($data)->save();
-
-        return response()->json(['data'=>$tenant]);
+    public function update(UpdateTenantRequest $request, int $id)
+    {
+        return response()->json([
+            'data' => new TenantResource($this->tenants->update($id, $request->payload())),
+        ]);
     }
 }
-

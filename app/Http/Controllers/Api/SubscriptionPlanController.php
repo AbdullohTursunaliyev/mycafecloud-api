@@ -3,103 +3,72 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\SubscriptionPlan;
+use App\Http\Requests\Api\StoreSubscriptionPlanRequest;
+use App\Http\Requests\Api\SubscriptionPlanIndexRequest;
+use App\Http\Requests\Api\UpdateSubscriptionPlanRequest;
+use App\Http\Resources\Admin\SubscriptionPlanResource;
+use App\Services\SubscriptionPlanCatalogService;
 use Illuminate\Http\Request;
 
 class SubscriptionPlanController extends Controller
 {
-    public function index(Request $request)
-    {
-        $operator = $request->user('operator');
-        $tenantId = $operator->tenant_id;
-
-        $q = trim((string)$request->get('q', ''));
-        $active = $request->get('active', null);
-        $zoneId = $request->get('zone_id', null);
-
-        $perPage = (int)$request->get('per_page', 20);
-        $perPage = $perPage > 0 ? min($perPage, 200) : 20;
-
-        $query = SubscriptionPlan::query()
-            ->where('tenant_id', $tenantId)
-            ->with(['zone:id,name'])
-            ->orderBy('is_active', 'desc')
-            ->orderBy('id', 'desc');
-
-        if ($q !== '') {
-            $query->where('name', 'like', "%{$q}%");
-        }
-        if ($zoneId !== null && $zoneId !== '') {
-            $query->where('zone_id', (int)$zoneId);
-        }
-        if ($active !== null && $active !== '') {
-            $query->where('is_active', filter_var($active, FILTER_VALIDATE_BOOLEAN));
-        }
-
-        $pag = $query->paginate($perPage);
-
-        return response()->json(['data' => $pag]);
+    public function __construct(
+        private readonly SubscriptionPlanCatalogService $plans,
+    ) {
     }
 
-    public function store(Request $request)
+    public function index(SubscriptionPlanIndexRequest $request)
     {
         $operator = $request->user('operator');
-        $tenantId = $operator->tenant_id;
+        $plans = $this->plans->paginate(
+            (int) $operator->tenant_id,
+            $request->filters(),
+            $request->perPage(),
+        );
+        $plans->setCollection(
+            collect(SubscriptionPlanResource::collection($plans->getCollection())->resolve())
+        );
 
-        $data = $request->validate([
-            'name' => ['required','string','min:3','max:120'],
-            'zone_id' => ['required','integer'],
-            'duration_days' => ['required','integer','min:1','max:3650'],
-            'price' => ['required','integer','min:0'],
-            'is_active' => ['nullable','boolean'],
-        ]);
-
-        $plan = SubscriptionPlan::create([
-            'tenant_id' => $tenantId,
-            'name' => $data['name'],
-            'zone_id' => (int)$data['zone_id'],
-            'duration_days' => (int)$data['duration_days'],
-            'price' => (int)$data['price'],
-            'is_active' => (bool)($data['is_active'] ?? true),
-        ]);
-
-        $plan->load(['zone:id,name']);
-
-        return response()->json(['data' => $plan], 201);
+        return response()->json(['data' => $plans]);
     }
 
-    public function update(Request $request, int $id)
+    public function store(StoreSubscriptionPlanRequest $request)
     {
         $operator = $request->user('operator');
-        $tenantId = $operator->tenant_id;
+        $plan = $this->plans->create(
+            (int) $operator->tenant_id,
+            $request->payload(),
+        );
 
-        $plan = SubscriptionPlan::where('tenant_id', $tenantId)->findOrFail($id);
+        return response()->json([
+            'data' => (new SubscriptionPlanResource($plan))->resolve(),
+        ], 201);
+    }
 
-        $data = $request->validate([
-            'name' => ['sometimes','required','string','min:3','max:120'],
-            'zone_id' => ['sometimes','required','integer'],
-            'duration_days' => ['sometimes','required','integer','min:1','max:3650'],
-            'price' => ['sometimes','required','integer','min:0'],
-            'is_active' => ['sometimes','required','boolean'],
+    public function update(UpdateSubscriptionPlanRequest $request, int $id)
+    {
+        $operator = $request->user('operator');
+        $plan = $this->plans->update(
+            (int) $operator->tenant_id,
+            $id,
+            $request->payload(),
+        );
+
+        return response()->json([
+            'data' => (new SubscriptionPlanResource($plan))->resolve(),
         ]);
-
-        $plan->fill($data);
-        $plan->save();
-
-        $plan->load(['zone:id,name']);
-
-        return response()->json(['data' => $plan]);
     }
 
     public function toggle(Request $request, int $id)
     {
         $operator = $request->user('operator');
-        $tenantId = $operator->tenant_id;
+        $plan = $this->plans->toggle(
+            (int) $operator->tenant_id,
+            $id,
+        );
 
-        $plan = SubscriptionPlan::where('tenant_id', $tenantId)->findOrFail($id);
-        $plan->is_active = !$plan->is_active;
-        $plan->save();
-
-        return response()->json(['data' => $plan]);
+        return response()->json([
+            'data' => (new SubscriptionPlanResource($plan))->resolve(),
+        ]);
     }
 }
