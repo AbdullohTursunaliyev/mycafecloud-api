@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\ShiftHistoryController;
 use App\Http\Controllers\Api\TransferController;
 use App\Http\Controllers\Api\SubscriptionPlanController;
 use App\Http\Controllers\Api\ZoneController;
+use App\Http\Controllers\Api\ZonePricingWindowController;
 use App\Http\Controllers\Api\LayoutController;
 use App\Http\Controllers\Cp\CpAuthController;
 use App\Http\Controllers\Cp\CpLicenseController;
@@ -42,11 +43,17 @@ use App\Http\Controllers\Api\ReturnController;
 use App\Http\Controllers\Api\ShellGameController;
 use App\Http\Controllers\Api\OwnerMobileAuthController;
 use App\Http\Controllers\Api\BillingLogController;
+use App\Http\Controllers\Api\ClubVisualController;
+use App\Http\Controllers\Api\NexoraAssistantController;
+use App\Http\Controllers\Api\ShellBannerController;
+use App\Http\Controllers\Api\ShellBannerManifestController;
 
 use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AgentSessionController;
 
 use App\Http\Controllers\Saas\SaasAuthController;
+use App\Http\Controllers\Saas\SaasPlanController;
+use App\Http\Controllers\Saas\SaasReportController;
 use App\Http\Controllers\Saas\TenantController;
 use App\Http\Controllers\Saas\LicenseController;
 
@@ -101,6 +108,13 @@ Route::prefix('saas')->group(function () {
         Route::get('/tenants/{id}', [TenantController::class, 'show']);
         Route::patch('/tenants/{id}', [TenantController::class, 'update']);
 
+        // SaaS plans
+        Route::get('/plans', [SaasPlanController::class, 'index']);
+        Route::patch('/plans/{id}', [SaasPlanController::class, 'update']);
+
+        // SaaS reports
+        Route::get('/reports/overview', [SaasReportController::class, 'overview']);
+
         // Licenses
         Route::get('/licenses', [LicenseController::class, 'index']);
         Route::post('/tenants/{tenantId}/licenses', [LicenseController::class, 'createForTenant']);
@@ -154,6 +168,7 @@ Route::middleware(['pc.device', 'throttle:120,1'])->group(function () {
     Route::get('/agent/settings', [AgentController::class, 'settings']);
     Route::get('/agent/commands/poll', [AgentController::class, 'poll']);
     Route::post('/agent/commands/ack', [AgentController::class, 'ack']);
+    Route::get('/agent/shell-banners', [ShellBannerManifestController::class, 'index']);
     Route::get('/agent/profiles/pull', [AgentGameProfileController::class, 'pull']);
     Route::post('/agent/profiles/push', [AgentGameProfileController::class, 'push']);
     Route::get('/agent/profiles/{id}/download', [AgentGameProfileController::class, 'download']);
@@ -174,6 +189,30 @@ Route::middleware('auth:operator')->group(function () {
     Route::post('/settings/agent-installer', [SettingController::class, 'uploadAgentInstaller']);
     Route::post('/settings/client-installer', [SettingController::class, 'uploadClientInstaller']);
     Route::post('/settings/shell-installer', [SettingController::class, 'uploadShellInstaller']);
+    Route::post('/club-visuals/upload-image', [ClubVisualController::class, 'uploadImage'])
+        ->middleware('require.role:admin,owner');
+    Route::post('/club-visuals/upload-audio', [ClubVisualController::class, 'uploadAudio'])
+        ->middleware('require.role:admin,owner');
+    Route::post('/club-visuals/generate-draft', [ClubVisualController::class, 'generateDraft'])
+        ->middleware(['require.role:admin,owner', 'require.feature:ai_generation']);
+    Route::post('/shell-banners/upload-image', [ShellBannerController::class, 'uploadImage'])
+        ->middleware('require.role:admin,owner');
+    Route::post('/shell-banners/upload-logo', [ShellBannerController::class, 'uploadLogo'])
+        ->middleware('require.role:admin,owner');
+    Route::post('/shell-banners/upload-audio', [ShellBannerController::class, 'uploadAudio'])
+        ->middleware('require.role:admin,owner');
+    Route::get('/nexora-assistant/overview', [NexoraAssistantController::class, 'overview'])
+        ->middleware('require.feature:nexora_ai');
+    Route::post('/nexora-assistant/plan', [NexoraAssistantController::class, 'plan'])
+        ->middleware('require.feature:nexora_ai');
+    Route::post('/nexora-assistant/execute', [NexoraAssistantController::class, 'execute'])
+        ->middleware('require.feature:nexora_ai');
+    Route::post('/nexora-assistant/speak', [NexoraAssistantController::class, 'speak'])
+        ->middleware('require.feature:nexora_ai');
+    Route::post('/nexora-assistant/transcribe', [NexoraAssistantController::class, 'transcribe'])
+        ->middleware('require.feature:nexora_ai');
+    Route::post('/nexora-assistant/autopilot', [NexoraAssistantController::class, 'updateAutopilot'])
+        ->middleware(['require.role:admin,owner', 'require.feature:ai_autopilot']);
 
     // Clients
     Route::get('/clients', [ClientController::class, 'index']);
@@ -208,6 +247,8 @@ Route::middleware('auth:operator')->group(function () {
     Route::get('/sessions/active', [SessionController::class, 'active']);
     Route::post('/sessions/start', [SessionController::class, 'start']);
     Route::post('/sessions/{id}/stop', [SessionController::class, 'stop']);
+    Route::post('/sessions/{id}/pause', [SessionController::class, 'pause']);
+    Route::post('/sessions/{id}/resume', [SessionController::class, 'resume']);
 
     // Shifts
     Route::get('/shifts/current', [ShiftController::class, 'current']);
@@ -235,9 +276,9 @@ Route::middleware('auth:operator')->group(function () {
     Route::get('/reports/branch-compare', [ReportController::class, 'branchCompare'])
         ->middleware('require.role:admin,owner');
     Route::get('/reports/autopilot', [ReportController::class, 'autopilot'])
-        ->middleware('require.role:admin,owner');
+        ->middleware(['require.role:admin,owner', 'require.feature:ai_autopilot']);
     Route::post('/reports/autopilot/apply', [ReportController::class, 'autopilotApply'])
-        ->middleware('require.role:admin,owner');
+        ->middleware(['require.role:admin,owner', 'require.feature:ai_autopilot']);
     Route::get('/reports/exchange', [ReportController::class, 'exchange'])
         ->middleware('require.role:admin,owner');
     Route::post('/reports/exchange/config', [ReportController::class, 'exchangeConfig'])
@@ -253,6 +294,31 @@ Route::middleware('auth:operator')->group(function () {
     Route::post('/zones', [ZoneController::class, 'store']);
     Route::patch('/zones/{id}', [ZoneController::class, 'update']);
     Route::post('/zones/{id}/toggle', [ZoneController::class, 'toggle']);
+    Route::get('/club-visuals', [ClubVisualController::class, 'index'])
+        ->middleware('require.role:admin,owner');
+    Route::get('/shell-banners', [ShellBannerController::class, 'index'])
+        ->middleware('require.role:admin,owner');
+    Route::post('/club-visuals', [ClubVisualController::class, 'store'])
+        ->middleware('require.role:admin,owner');
+    Route::post('/shell-banners', [ShellBannerController::class, 'store'])
+        ->middleware('require.role:admin,owner');
+    Route::patch('/club-visuals/{id}', [ClubVisualController::class, 'update'])
+        ->middleware('require.role:admin,owner');
+    Route::patch('/shell-banners/{id}', [ShellBannerController::class, 'update'])
+        ->middleware('require.role:admin,owner');
+    Route::post('/club-visuals/{id}/toggle', [ClubVisualController::class, 'toggle'])
+        ->middleware('require.role:admin,owner');
+    Route::post('/shell-banners/{id}/toggle', [ShellBannerController::class, 'toggle'])
+        ->middleware('require.role:admin,owner');
+    Route::delete('/club-visuals/{id}', [ClubVisualController::class, 'destroy'])
+        ->middleware('require.role:admin,owner');
+    Route::delete('/shell-banners/{id}', [ShellBannerController::class, 'destroy'])
+        ->middleware('require.role:admin,owner');
+    Route::get('/zones/{id}/pricing-windows', [ZonePricingWindowController::class, 'index']);
+    Route::post('/zones/{id}/pricing-windows', [ZonePricingWindowController::class, 'store']);
+    Route::patch('/zones/{id}/pricing-windows/{windowId}', [ZonePricingWindowController::class, 'update']);
+    Route::post('/zones/{id}/pricing-windows/{windowId}/toggle', [ZonePricingWindowController::class, 'toggle']);
+    Route::delete('/zones/{id}/pricing-windows/{windowId}', [ZonePricingWindowController::class, 'destroy']);
 
     Route::post('/tenants/join-code/refresh', [\App\Http\Controllers\Api\TenantJoinCodeController::class, 'refresh']);
 
@@ -390,6 +456,11 @@ Route::prefix('owner-mobile')->group(function () {
     Route::middleware(['auth:operator','require.role:owner'])->group(function () {
         Route::get('/auth/me', [OwnerMobileAuthController::class, 'me']);
         Route::post('/auth/logout', [OwnerMobileAuthController::class, 'logout']);
+        Route::get('/nexora/overview', [NexoraAssistantController::class, 'overview'])->middleware('require.feature:nexora_ai');
+        Route::post('/nexora/plan', [NexoraAssistantController::class, 'plan'])->middleware('require.feature:nexora_ai');
+        Route::post('/nexora/execute', [NexoraAssistantController::class, 'execute'])->middleware('require.feature:nexora_ai');
+        Route::post('/nexora/speak', [NexoraAssistantController::class, 'speak'])->middleware('require.feature:nexora_ai');
+        Route::post('/nexora/transcribe', [NexoraAssistantController::class, 'transcribe'])->middleware('require.feature:nexora_ai');
 
         // Shifts (read-only)
         Route::get('/shifts/current', [ShiftController::class, 'current']);
@@ -403,14 +474,14 @@ Route::prefix('owner-mobile')->group(function () {
         Route::get('/reports/cash', [ReportController::class, 'cash']);
         Route::get('/reports/sessions', [ReportController::class, 'sessions']);
         Route::get('/reports/top-clients', [ReportController::class, 'topClients']);
-        Route::get('/reports/ai-insights', [ReportController::class, 'aiInsights']);
+        Route::get('/reports/ai-insights', [ReportController::class, 'aiInsights'])->middleware('require.feature:ai_insights');
         Route::get('/reports/lost-revenue', [ReportController::class, 'lostRevenue']);
         Route::get('/reports/zone-profitability', [ReportController::class, 'zoneProfitability']);
         Route::get('/reports/ab-compare', [ReportController::class, 'abCompare']);
         Route::get('/reports/monthly-pdf', [ReportController::class, 'monthlyPdf']);
         Route::get('/reports/branch-compare', [ReportController::class, 'branchCompare']);
         Route::get('/reports/exchange', [ReportController::class, 'exchange']);
-        Route::get('/reports/autopilot', [ReportController::class, 'autopilot']);
+        Route::get('/reports/autopilot', [ReportController::class, 'autopilot'])->middleware('require.feature:ai_autopilot');
     });
 });
 

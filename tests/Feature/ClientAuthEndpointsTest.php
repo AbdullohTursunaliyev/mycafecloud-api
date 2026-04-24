@@ -238,6 +238,76 @@ class ClientAuthEndpointsTest extends TestCase
             ->assertJsonPath('message', 'No token');
     }
 
+    public function test_client_auth_state_is_read_only_and_uses_discrete_minute_countdown(): void
+    {
+        $fixture = $this->createTenantFixture();
+        $license = $this->createLicenseKey($fixture['tenant'], 'LIC-CLIENT-07');
+        $fixture['client']->update(['balance' => 500, 'bonus' => 0]);
+        $fixture['pc']->update(['status' => 'busy']);
+
+        $token = $this->issueClientToken($fixture['tenant'], $fixture['client']);
+
+        $session = Session::query()->create([
+            'tenant_id' => $fixture['tenant']->id,
+            'pc_id' => $fixture['pc']->id,
+            'client_id' => $fixture['client']->id,
+            'started_at' => now()->subSeconds(30),
+            'status' => 'active',
+            'price_total' => 0,
+        ]);
+
+        $response = $this->withHeaders($this->clientHeaders($token))
+            ->getJson('/api/client-auth/state?license_key=' . $license->key . '&pc_code=' . $fixture['pc']->code);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('locked', false)
+            ->assertJsonPath('session.id', $session->id)
+            ->assertJsonPath('session.seconds_left', 90)
+            ->assertJsonPath('session.from', 'balance');
+
+        $this->assertSame(0, (int) $session->fresh()->price_total);
+        $this->assertNull($session->fresh()->last_billed_at);
+        $this->assertSame(500, (int) $fixture['client']->fresh()->balance);
+    }
+
+    public function test_client_auth_logout_bills_only_completed_minutes_with_exact_timestamps(): void
+    {
+        $fixture = $this->createTenantFixture();
+        $license = $this->createLicenseKey($fixture['tenant'], 'LIC-CLIENT-08');
+        $fixture['client']->update(['balance' => 1000, 'bonus' => 0]);
+        $fixture['pc']->update(['status' => 'busy']);
+
+        $token = $this->issueClientToken($fixture['tenant'], $fixture['client']);
+        $startedAt = now()->subSeconds(95);
+
+        $session = Session::query()->create([
+            'tenant_id' => $fixture['tenant']->id,
+            'pc_id' => $fixture['pc']->id,
+            'client_id' => $fixture['client']->id,
+            'started_at' => $startedAt,
+            'status' => 'active',
+            'price_total' => 0,
+        ]);
+
+        $this->withHeaders($this->clientHeaders($token))
+            ->postJson('/api/client-auth/logout', [
+                'license_key' => $license->key,
+                'pc_code' => $fixture['pc']->code,
+            ])
+            ->assertOk()
+            ->assertJsonPath('ok', true);
+
+        $freshSession = $session->fresh();
+        $this->assertSame('finished', (string) $freshSession->status);
+        $this->assertSame(167, (int) $freshSession->price_total);
+        $this->assertSame(
+            $startedAt->copy()->addMinute()->toIso8601String(),
+            optional($freshSession->last_billed_at)->toIso8601String(),
+        );
+        $this->assertSame(833, (int) $fixture['client']->fresh()->balance);
+    }
+
     private function clientHeaders(string $token): array
     {
         return [

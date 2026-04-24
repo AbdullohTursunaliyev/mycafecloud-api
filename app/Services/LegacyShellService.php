@@ -11,7 +11,6 @@ class LegacyShellService
     public function __construct(
         private readonly ClientShellContextService $context,
         private readonly ClientSessionService $sessions,
-        private readonly SessionBillingService $billing,
     ) {
     }
 
@@ -44,13 +43,6 @@ class LegacyShellService
                     'price_per_hour' => $pcView['rate_per_hour'],
                 ],
             ];
-        }
-
-        try {
-            $this->billing->billSingleSession($session);
-            $session->refresh();
-        } catch (\Throwable) {
-            // Legacy shell status should stay available even if billing tick fails.
         }
 
         if ($session->status !== 'active' || $session->ended_at) {

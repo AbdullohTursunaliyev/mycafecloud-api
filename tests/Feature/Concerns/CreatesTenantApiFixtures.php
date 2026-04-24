@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Models\LicenseKey;
 use App\Models\Operator;
 use App\Models\Pc;
+use App\Models\SaasPlan;
 use App\Models\Tenant;
 use App\Models\Zone;
 use App\Services\ClientTokenService;
@@ -16,11 +17,14 @@ use Laravel\Sanctum\Sanctum;
 
 trait CreatesTenantApiFixtures
 {
-    protected function createTenantFixture(): array
+    protected function createTenantFixture(string $planCode = 'pro'): array
     {
+        $planId = SaasPlan::query()->where('code', $planCode)->value('id');
+
         $tenant = Tenant::query()->create([
             'name' => 'Test Club',
             'status' => 'active',
+            'saas_plan_id' => $planId,
         ]);
 
         $operator = Operator::query()->create([

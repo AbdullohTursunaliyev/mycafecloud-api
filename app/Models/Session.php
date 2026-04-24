@@ -8,13 +8,14 @@ class Session extends Model
 {
     protected $fillable = [
         'tenant_id','pc_id','operator_id','user_id','tariff_id', 'last_billed_at',
-        'started_at','ended_at','price_total','status', 'client_id', 'client_package_id', 'is_package'
+        'started_at','ended_at','price_total','status', 'client_id', 'client_package_id', 'is_package', 'paused_at'
     ];
 
     protected $casts = [
         'started_at' => 'datetime',
         'ended_at'   => 'datetime',
         'last_billed_at' => 'datetime',
+        'paused_at' => 'datetime',
     ];
 
     public function pc() {
@@ -37,6 +38,10 @@ class Session extends Model
         return $this->belongsTo(ClientPackage::class);
     }
 
-}
+    public function chargeEvents()
+    {
+        return $this->hasMany(SessionChargeEvent::class);
+    }
 
+}
 

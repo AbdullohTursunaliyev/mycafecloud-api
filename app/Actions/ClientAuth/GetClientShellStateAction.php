@@ -5,7 +5,6 @@ namespace App\Actions\ClientAuth;
 use App\Services\ClientSessionService;
 use App\Services\ClientShellContextService;
 use App\Services\PcCommandDispatchService;
-use App\Services\SessionBillingService;
 use App\ValueObjects\ClientAuth\ClientShellStateResult;
 
 class GetClientShellStateAction
@@ -13,7 +12,6 @@ class GetClientShellStateAction
     public function __construct(
         private readonly ClientShellContextService $context,
         private readonly ClientSessionService $sessions,
-        private readonly SessionBillingService $billing,
         private readonly PcCommandDispatchService $commands,
     ) {
     }
@@ -29,18 +27,8 @@ class GetClientShellStateAction
         $session = $this->sessions->resolveOwnedActiveSession($tenantId, $pc, $client);
         $pcView = $this->sessions->describePc($pc);
 
-        if ($session) {
-            try {
-                $this->billing->billSingleSession($session);
-                $session->refresh();
-                $client->refresh();
-
-                if ($session->status !== 'active' || $session->ended_at) {
-                    $session = null;
-                }
-            } catch (\Throwable) {
-                // State endpoint should stay available even if billing tick fails.
-            }
+        if ($session && ($session->status !== 'active' || $session->ended_at)) {
+            $session = null;
         }
 
         $secondsLeft = 0;

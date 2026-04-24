@@ -178,6 +178,12 @@ class ShiftAndLegacyEndpointsTest extends TestCase
             ->assertJsonPath('session.id', $session->id)
             ->assertJsonPath('pc.code', $fixture['pc']->code);
 
+        $this->assertSame(0, (int) $session->fresh()->price_total);
+        $this->assertSame(
+            now()->subMinutes(10)->toIso8601String(),
+            optional($session->fresh()->last_billed_at)->toIso8601String(),
+        );
+
         $this->postJson('/api/shell/logout', [
             'license_key' => $license->key,
             'pc_code' => $fixture['pc']->code,

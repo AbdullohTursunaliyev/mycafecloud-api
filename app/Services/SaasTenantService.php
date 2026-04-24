@@ -8,12 +8,26 @@ use Illuminate\Support\Facades\DB;
 
 class SaasTenantService
 {
+    public function __construct(
+        private readonly TenantFeatureService $features,
+    ) {
+    }
+
     public function paginate(array $filters): LengthAwarePaginator
     {
-        $query = Tenant::query()->orderByDesc('id');
+        $query = Tenant::query()
+            ->with('saasPlan')
+            ->withCount(['licenseKeys', 'pcs'])
+            ->orderByDesc('id');
 
         if (!empty($filters['status'])) {
             $query->where('status', (string) $filters['status']);
+        }
+
+        if (!empty($filters['plan_code'])) {
+            $query->whereHas('saasPlan', function ($builder) use ($filters): void {
+                $builder->where('code', (string) $filters['plan_code']);
+            });
         }
 
         $search = trim((string) ($filters['search'] ?? ''));
@@ -30,13 +44,15 @@ class SaasTenantService
         return Tenant::query()->create([
             'name' => $payload['name'],
             'status' => $payload['status'] ?? 'active',
+            'saas_plan_id' => $payload['saas_plan_id'] ?? $this->features->defaultPlanId(),
         ]);
     }
 
     public function show(int $id): Tenant
     {
         return Tenant::query()
-            ->withCount(['licenseKeys'])
+            ->with(['saasPlan'])
+            ->withCount(['licenseKeys', 'pcs'])
             ->findOrFail($id);
     }
 
@@ -45,6 +61,6 @@ class SaasTenantService
         $tenant = Tenant::query()->findOrFail($id);
         $tenant->fill($payload)->save();
 
-        return $tenant->fresh();
+        return $tenant->fresh(['saasPlan'])->loadCount(['licenseKeys', 'pcs']);
     }
 }

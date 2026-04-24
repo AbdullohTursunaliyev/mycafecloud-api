@@ -32,4 +32,17 @@ return [
         'methods' => ['cash', 'card', 'balance'],
         'promotion_methods' => ['cash'],
     ],
+    'nexora' => [
+        'autopilot' => [
+            'enabled' => false,
+            'auto_lock_idle_online' => false,
+            'suggest_idle_shutdown' => true,
+            'suggest_offline_watch' => true,
+        ],
+        'watch' => [
+            'idle_alert_count' => 3,
+            'offline_alert_count' => 1,
+            'low_load_ratio' => 0.25,
+        ],
+    ],
 ];

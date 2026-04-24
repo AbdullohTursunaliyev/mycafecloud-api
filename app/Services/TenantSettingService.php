@@ -8,10 +8,12 @@ class TenantSettingService
 {
     public function get(int $tenantId, string $key, mixed $default = null): mixed
     {
-        $value = Setting::query()
+        $setting = Setting::query()
             ->where('tenant_id', $tenantId)
             ->where('key', $key)
-            ->value('value');
+            ->first();
+
+        $value = $setting?->value;
 
         if ($value === null) {
             return $default;
@@ -34,7 +36,7 @@ class TenantSettingService
             $existing = Setting::query()
                 ->where('tenant_id', $tenantId)
                 ->where('key', $key)
-                ->value('value');
+                ->first()?->value;
 
             if (is_array($existing)) {
                 $value = [];

@@ -58,6 +58,9 @@ class SessionOverviewService
                     'seconds_left' => (int) ($time['seconds_left'] ?? 0),
                     'from' => (string) ($time['from'] ?? 'balance'),
                     'rate_per_hour' => (int) ($time['rate_per_hour'] ?? 0),
+                    'next_charge_at' => $time['next_charge_at'] ?? null,
+                    'paused' => (bool) ($time['paused'] ?? false),
+                    'pricing_rule' => $time['pricing_rule'] ?? null,
                 ];
             })
             ->values();

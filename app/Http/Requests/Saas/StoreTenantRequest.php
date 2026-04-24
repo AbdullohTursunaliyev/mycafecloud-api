@@ -17,6 +17,7 @@ class StoreTenantRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:120'],
             'status' => ['nullable', Rule::in(['active', 'suspended'])],
+            'saas_plan_id' => ['nullable', 'integer', 'exists:saas_plans,id'],
         ];
     }
 

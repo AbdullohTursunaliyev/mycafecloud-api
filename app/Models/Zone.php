@@ -17,4 +17,9 @@ class Zone extends Model
         'is_active' => 'boolean',
         'price_per_hour' => 'integer',
     ];
+
+    public function pricingWindows()
+    {
+        return $this->hasMany(ZonePricingWindow::class);
+    }
 }

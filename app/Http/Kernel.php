@@ -73,5 +73,6 @@ class Kernel extends HttpKernel
         'client.auth' => \App\Http\Middleware\ClientAuth::class,
         'require.role' => \App\Http\Middleware\RequireRole::class,
         'mobile.auth' => \App\Http\Middleware\MobileAuth::class,
+        'require.feature' => \App\Http\Middleware\RequireTenantFeature::class,
     ];
 }

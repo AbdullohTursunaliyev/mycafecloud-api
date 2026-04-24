@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Models\ClientTransaction;
 use App\Models\Operator;
 use App\Models\Pc;
+use App\Models\SaasPlan;
 use App\Models\Session;
 use App\Models\Setting;
 use App\Models\Tenant;
@@ -75,6 +76,18 @@ class ReportEndpointsTest extends TestCase
 
         $insightIds = collect($response->json('data.insights'))->pluck('id')->all();
         $this->assertContains('low_utilization', $insightIds);
+    }
+
+    public function test_basic_plan_cannot_access_owner_mobile_ai_insights(): void
+    {
+        $fixture = $this->createReportFixture('basic');
+
+        $this->actingAsOwner($fixture['operator'])
+            ->getJson('/api/owner-mobile/reports/ai-insights?from=2026-04-15&to=2026-04-21')
+            ->assertStatus(403)
+            ->assertJsonPath('feature', 'ai_insights')
+            ->assertJsonPath('upgrade_required', true)
+            ->assertJsonPath('plan.code', 'basic');
     }
 
     public function test_autopilot_dry_run_does_not_persist_changes(): void
@@ -169,11 +182,12 @@ class ReportEndpointsTest extends TestCase
         $this->assertSame(25000, $saved['auction_ceiling_uzs'] ?? null);
     }
 
-    private function createReportFixture(): array
+    private function createReportFixture(string $planCode = 'pro'): array
     {
         $tenant = Tenant::query()->create([
             'name' => 'Test Club',
             'status' => 'active',
+            'saas_plan_id' => SaasPlan::query()->where('code', $planCode)->value('id'),
         ]);
 
         $operator = Operator::query()->create([

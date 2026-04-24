@@ -17,6 +17,7 @@ class UpdateTenantRequest extends FormRequest
         return [
             'name' => ['sometimes', 'string', 'max:120'],
             'status' => ['sometimes', Rule::in(['active', 'suspended'])],
+            'saas_plan_id' => ['sometimes', 'nullable', 'integer', 'exists:saas_plans,id'],
         ];
     }
 

@@ -63,7 +63,7 @@ class LayoutPairCodeAndSessionListEndpointsTest extends TestCase
             ->assertJsonPath('data.0.client.login', $fixture['client']->login)
             ->assertJsonPath('data.0.tariff.id', $tariff->id)
             ->assertJsonPath('data.0.from', 'balance')
-            ->assertJsonPath('data.0.rate_per_hour', $fixture['zone']->price_per_hour)
+            ->assertJsonPath('data.0.rate_per_hour', $tariff->price_per_hour)
             ->assertJsonPath('data.0.price_total', 4000);
 
         $secondsLeft = (int) $response->json('data.0.seconds_left');

@@ -21,6 +21,9 @@ class Kernel extends ConsoleKernel
         $schedule->command('shifts:auto-tick')
             ->everyMinute()
             ->withoutOverlapping();
+        $schedule->command('nexora:autopilot-tick')
+            ->everyMinute()
+            ->withoutOverlapping();
 
     }
 

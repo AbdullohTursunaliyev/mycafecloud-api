@@ -23,6 +23,7 @@ class ClientSessionService
         private readonly SessionBillingService $billing,
         private readonly PcZoneResolver $pcZoneResolver,
         private readonly ClientWalletService $wallets,
+        private readonly SessionProjectionService $projection,
     ) {
     }
 
@@ -353,7 +354,7 @@ class ClientSessionService
 
     public function describeSession(Session $session, Client $client, Pc $pc): array
     {
-        $resolved = $this->resolveSessionTime($session, $client, $pc);
+        $resolved = $this->projection->describe($session, $client, $pc);
 
         return [
             'id' => $session->id,
@@ -368,53 +369,15 @@ class ClientSessionService
             'from' => $resolved['from'],
             'zone' => $resolved['zone_name'],
             'rate_per_hour' => $resolved['rate_per_hour'],
+            'next_charge_at' => $resolved['next_charge_at'],
+            'paused' => $resolved['paused'],
+            'pricing_rule' => $resolved['pricing_rule'],
         ];
     }
 
     public function resolveSessionTime(Session $session, ?Client $client, Pc $pc): array
     {
-        $resolved = $this->pcZoneResolver->resolveNameAndRate($pc);
-
-        if ((bool) $session->is_package && $session->client_package_id) {
-            $package = $session->relationLoaded('clientPackage') ? $session->clientPackage : null;
-            if (!$package) {
-                $package = ClientPackage::query()
-                    ->with('package')
-                    ->whereKey($session->client_package_id)
-                    ->first();
-            }
-
-            if ($package && (int) $package->remaining_min > 0) {
-                $rawSeconds = max(0, (int) $package->remaining_min) * 60;
-
-                return [
-                    'seconds_left' => $this->subtractElapsedSeconds($session, $rawSeconds),
-                    'from' => 'package',
-                    'zone_name' => $resolved['zone_name'],
-                    'rate_per_hour' => $resolved['rate_per_hour'],
-                ];
-            }
-        }
-
-        if (!$client || $resolved['rate_per_hour'] <= 0) {
-            return [
-                'seconds_left' => 0,
-                'from' => 'balance',
-                'zone_name' => $resolved['zone_name'],
-                'rate_per_hour' => $resolved['rate_per_hour'],
-            ];
-        }
-
-        $balance = max(0, (int) ($client->balance ?? 0));
-        $bonus = max(0, (int) ($client->bonus ?? 0));
-        $rawSeconds = (int) floor(($this->wallets->total($client) / $resolved['rate_per_hour']) * 3600);
-
-        return [
-            'seconds_left' => $this->subtractElapsedSeconds($session, $rawSeconds),
-            'from' => $balance > 0 ? 'balance' : ($bonus > 0 ? 'bonus' : 'balance'),
-            'zone_name' => $resolved['zone_name'],
-            'rate_per_hour' => $resolved['rate_per_hour'],
-        ];
+        return $this->projection->describe($session, $client, $pc);
     }
 
     public function resolveActivePackageForZone(int $tenantId, Client $client, Pc $pc): ?ClientPackage
@@ -488,23 +451,6 @@ class ClientSessionService
             'payload' => ['reason' => $reason],
             'status' => 'pending',
         ]);
-    }
-
-    private function subtractElapsedSeconds(Session $session, int $rawSeconds): int
-    {
-        $rawSeconds = max(0, (int) $rawSeconds);
-        if ($rawSeconds <= 0) {
-            return 0;
-        }
-
-        $anchor = $session->last_billed_at ?: $session->started_at;
-        if (!$anchor) {
-            return $rawSeconds;
-        }
-
-        $elapsed = max(0, (int) $anchor->diffInSeconds(now(), false));
-
-        return max(0, $rawSeconds - $elapsed);
     }
 
     private function lockPc(int $tenantId, int $pcId): void

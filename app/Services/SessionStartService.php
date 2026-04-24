@@ -11,6 +11,7 @@ class SessionStartService
 {
     public function __construct(
         private readonly ClientWalletService $wallets,
+        private readonly SessionMeteringService $metering,
     ) {
     }
 
@@ -62,7 +63,7 @@ class SessionStartService
 
     public function ensureWalletCanStart(Client $client, Tariff $tariff, string $key = 'balance'): void
     {
-        $pricePerMin = (int) ceil(((int) $tariff->price_per_hour) / 60);
+        $pricePerMin = $this->metering->pricePerMinute((int) $tariff->price_per_hour);
         if ($this->wallets->total($client) < $pricePerMin) {
             throw ValidationException::withMessages([
                 $key => 'Недостаточно средств',

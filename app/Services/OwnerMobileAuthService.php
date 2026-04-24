@@ -10,10 +10,15 @@ use Illuminate\Validation\ValidationException;
 
 class OwnerMobileAuthService
 {
+    public function __construct(
+        private readonly TenantFeatureService $features,
+    ) {
+    }
+
     public function login(string $licenseKey, string $login, string $password): array
     {
         $license = LicenseKey::query()
-            ->with('tenant')
+            ->with(['tenant.saasPlan'])
             ->where('key', $licenseKey)
             ->first();
 
@@ -67,6 +72,7 @@ class OwnerMobileAuthService
             'tenant' => [
                 'id' => (int) $license->tenant->id,
                 'name' => (string) $license->tenant->name,
+                'saas_plan' => $this->features->planPayload($license->tenant),
             ],
             'operator' => [
                 'id' => (int) $operator->id,

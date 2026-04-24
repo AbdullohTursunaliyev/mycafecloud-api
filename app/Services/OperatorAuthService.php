@@ -11,6 +11,11 @@ use Illuminate\Validation\ValidationException;
 
 class OperatorAuthService
 {
+    public function __construct(
+        private readonly TenantFeatureService $features,
+    ) {
+    }
+
     public function loginApi(string $licenseKey, string $login, string $password): array
     {
         [$license, $operator] = $this->resolveApiCredentials($licenseKey, $login, $password);
@@ -29,6 +34,7 @@ class OperatorAuthService
             'tenant' => [
                 'id' => (int) $license->tenant->id,
                 'name' => (string) $license->tenant->name,
+                'saas_plan' => $this->features->planPayload($license->tenant),
             ],
             'operator' => [
                 'id' => (int) $operator->id,
@@ -52,6 +58,7 @@ class OperatorAuthService
                 'name' => (string) $license->tenant->name,
                 'status' => (string) $license->tenant->status,
                 'license_expires_at' => $license->expires_at?->toIso8601String(),
+                'saas_plan' => $this->features->planPayload($license->tenant),
             ],
             'operator' => [
                 'id' => (int) $operator->id,
@@ -71,7 +78,7 @@ class OperatorAuthService
             ->orderByDesc('expires_at')
             ->first();
 
-        $tenant = $operator->tenant()->select('id', 'name', 'status')->first();
+        $tenant = $operator->tenant()->with('saasPlan')->select('id', 'name', 'status', 'saas_plan_id')->first();
 
         return [
             'tenant' => $tenant ? [
@@ -79,6 +86,7 @@ class OperatorAuthService
                 'name' => (string) $tenant->name,
                 'status' => (string) $tenant->status,
                 'license_expires_at' => $license?->expires_at?->toIso8601String(),
+                'saas_plan' => $this->features->planPayload($tenant),
             ] : null,
             'operator' => [
                 'id' => (int) $operator->id,
@@ -93,7 +101,7 @@ class OperatorAuthService
     private function resolveApiCredentials(string $licenseKey, string $login, string $password): array
     {
         $license = LicenseKey::query()
-            ->with('tenant')
+            ->with(['tenant.saasPlan'])
             ->where('key', $licenseKey)
             ->first();
 
@@ -133,7 +141,7 @@ class OperatorAuthService
     private function resolveCpCredentials(string $licenseKey, string $login, string $password): array
     {
         $license = LicenseKey::query()
-            ->with(['tenant:id,name,status'])
+            ->with(['tenant:id,name,status,saas_plan_id', 'tenant.saasPlan'])
             ->where('key', $licenseKey)
             ->first();
 

@@ -41,3 +41,7 @@ Bu holda:
 - Docker build vaqtida `ext-cassandra` platform talabi ignore qilinadi.
 - Scheduler konteyneri `pcs:heartbeat-check`, `bookings:expire`, `billing:sessions-tick`, `shifts:auto-tick` komandalarini har daqiqada yuritadi.
 - Agar ishlab chiqarishdagi maxsus env qiymatlar bo'lsa, ularni `.env.docker` ga ko'chiring.
+
+## Arxitektura Hujjatlari
+
+- Billing engine yo'nalishi: [docs/billing_engine_architecture.md](/Users/user/Desktop/GitHub/mycafecloud-api/docs/billing_engine_architecture.md)
