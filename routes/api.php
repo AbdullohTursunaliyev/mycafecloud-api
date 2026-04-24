@@ -56,6 +56,8 @@ use App\Http\Controllers\Saas\SaasPlanController;
 use App\Http\Controllers\Saas\SaasReportController;
 use App\Http\Controllers\Saas\TenantController;
 use App\Http\Controllers\Saas\LicenseController;
+use App\Http\Controllers\Landing\LandingLeadController as PublicLandingLeadController;
+use App\Http\Controllers\Saas\LandingLeadController as SaasLandingLeadController;
 
 /**
  * -----------------------------------
@@ -86,6 +88,8 @@ Route::get('/deployment/quick-install/{code}/script.ps1', [DeploymentController:
 Route::get('/deployment/quick-install/{code}/gpo.ps1', [DeploymentController::class, 'publicGpoScript'])
     ->middleware('throttle:120,1');
 
+Route::middleware('throttle:30,1')->post('/landing/leads', [PublicLandingLeadController::class, 'store']);
+
 
 Route::post('/shell/session-state', [ShellController::class, 'sessionState']);
 Route::post('/shell/logout', [ShellController::class, 'logout']);
@@ -114,6 +118,10 @@ Route::prefix('saas')->group(function () {
 
         // SaaS reports
         Route::get('/reports/overview', [SaasReportController::class, 'overview']);
+
+        // Landing leads
+        Route::get('/landing-leads', [SaasLandingLeadController::class, 'index']);
+        Route::patch('/landing-leads/{id}', [SaasLandingLeadController::class, 'update']);
 
         // Licenses
         Route::get('/licenses', [LicenseController::class, 'index']);
