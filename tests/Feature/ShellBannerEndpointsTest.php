@@ -156,7 +156,9 @@ class ShellBannerEndpointsTest extends TestCase
         $this->actingAsOwner($fixture['operator'])->postJson('/api/shell-banners', [
             'name' => 'Global Banner',
             'headline' => 'Hammasiga ko‘rinadi',
+            'prompt_text' => 'Global banner prompt',
             'logo_url' => 'https://cdn.example.com/global-logo.png',
+            'audio_url' => 'https://cdn.example.com/global-brief.mp3',
             'target_scope' => 'all',
             'display_seconds' => 10,
         ])->assertCreated();
@@ -193,6 +195,8 @@ class ShellBannerEndpointsTest extends TestCase
             ->assertOk()
             ->assertJsonCount(2, 'data')
             ->assertJsonPath('data.0.name', 'Global Banner')
+            ->assertJsonPath('data.0.prompt_text', 'Global banner prompt')
+            ->assertJsonPath('data.0.audio_url', 'https://cdn.example.com/global-brief.mp3')
             ->assertJsonPath('data.1.name', 'VIP Banner');
     }
 }
