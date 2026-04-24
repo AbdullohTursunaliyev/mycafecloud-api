@@ -36,10 +36,10 @@ class StoreLandingLeadRequest extends FormRequest
             'club_name' => $validated['club'],
             'city' => $validated['city'] ?? null,
             'pc_count' => (int) $validated['pcs'],
-            'plan_code' => $validated['plan'] ?? null,
+            'plan_code' => $validated['plan'] ?? 'basic',
             'contact' => $validated['contact'],
             'message' => $validated['message'] ?? null,
-            'locale' => $validated['locale'] ?? null,
+            'locale' => $validated['locale'] ?? 'uz',
             'meta' => [
                 'client_created_at' => $validated['created_at'] ?? null,
             ],
