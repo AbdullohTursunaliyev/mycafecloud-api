@@ -8,6 +8,8 @@ use Illuminate\Support\Collection;
 
 class ShellBannerManifestService
 {
+    private const DEFAULT_TENANT_ID = 0;
+
     public function listForPc(int $tenantId, int $pcId): Collection
     {
         $pc = Pc::query()
@@ -16,7 +18,7 @@ class ShellBannerManifestService
 
         $now = now();
 
-        return ShellBanner::query()
+        $banners = ShellBanner::query()
             ->where('tenant_id', $tenantId)
             ->where('is_active', true)
             ->orderBy('sort_order')
@@ -37,6 +39,23 @@ class ShellBannerManifestService
                     default => true,
                 };
             })
+            ->values();
+
+        if ($banners->isNotEmpty()) {
+            return $banners;
+        }
+
+        return $this->defaultBanners();
+    }
+
+    private function defaultBanners(): Collection
+    {
+        return ShellBanner::query()
+            ->where('tenant_id', self::DEFAULT_TENANT_ID)
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->orderByDesc('updated_at')
+            ->get()
             ->values();
     }
 }
