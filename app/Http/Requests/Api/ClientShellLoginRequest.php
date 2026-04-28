@@ -19,6 +19,7 @@ class ClientShellLoginRequest extends FormRequest
             'account_id' => ['nullable', 'string'],
             'login' => ['nullable', 'string'],
             'password' => ['nullable', 'string'],
+            'defer_session' => ['nullable', 'boolean'],
         ];
     }
 

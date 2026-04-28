@@ -19,6 +19,7 @@ class ClientShellLoginResource extends BaseJsonResource
             'client' => $this->resource->client,
             'pc' => $this->resource->pc,
             'session' => $this->resource->session,
+            'billing_options' => $this->resource->billingOptions,
             'note' => $this->resource->note,
         ];
     }

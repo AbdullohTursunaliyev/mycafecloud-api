@@ -10,6 +10,7 @@ readonly class ClientShellLoginResult
         public array $pc,
         public array $session,
         public ?string $note,
+        public array $billingOptions = [],
     ) {
     }
 }

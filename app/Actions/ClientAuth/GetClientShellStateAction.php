@@ -44,6 +44,8 @@ class GetClientShellStateAction
             client: [
                 'id' => (int) $client->id,
                 'login' => $client->login,
+                'phone' => $client->phone,
+                'username' => $client->username,
                 'balance' => (int) $client->balance,
                 'bonus' => (int) $client->bonus,
                 'pc' => $pc->code,
@@ -65,6 +67,7 @@ class GetClientShellStateAction
                 (int) $pc->id,
                 $session?->started_at,
             ),
+            billingOptions: $this->sessions->describeBillingOptions($tenantId, $client, $pc),
         );
     }
 }

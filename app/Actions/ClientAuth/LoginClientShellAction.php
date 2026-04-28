@@ -32,8 +32,25 @@ class LoginClientShellAction
         );
 
         $package = $this->sessions->ensureShellLoginAllowed($tenantId, $client, $pc);
-        $session = $this->sessions->startOrResumeShellSession($tenantId, $pc, $client, $package);
+        $billingOptions = $this->sessions->describeBillingOptions($tenantId, $client, $pc);
         $issued = $this->tokens->issue($tenantId, (int) $client->id);
+
+        if ((bool) ($attributes['defer_session'] ?? false)) {
+            $existing = $this->sessions->resolveOwnedActiveSession($tenantId, $pc, $client);
+
+            return new ClientShellLoginResult(
+                token: (string) $issued['plain'],
+                client: $this->clientPayload($client, $pc),
+                pc: $this->sessions->describePc($pc),
+                session: $existing
+                    ? $this->sessions->describeSession($existing, $client, $pc)
+                    : $this->pendingSessionPayload($pc),
+                note: $existing ? 'existing_active_session' : 'session_deferred',
+                billingOptions: $billingOptions,
+            );
+        }
+
+        $session = $this->sessions->startOrResumeShellSession($tenantId, $pc, $client, $package);
 
         return new ClientShellLoginResult(
             token: (string) $issued['plain'],
@@ -41,6 +58,7 @@ class LoginClientShellAction
             pc: $this->sessions->describePc($pc),
             session: $this->sessions->describeSession($session, $client, $pc),
             note: $session->wasRecentlyCreated ? null : 'existing_active_session',
+            billingOptions: $billingOptions,
         );
     }
 
@@ -55,6 +73,29 @@ class LoginClientShellAction
             'balance' => (int) $client->balance,
             'bonus' => (int) $client->bonus,
             'pc' => $pc->code,
+        ];
+    }
+
+    private function pendingSessionPayload(Pc $pc): array
+    {
+        $pcView = $this->sessions->describePc($pc);
+
+        return [
+            'id' => null,
+            'status' => 'pending',
+            'pc_id' => (int) $pc->id,
+            'pc_code' => $pc->code,
+            'started_at' => null,
+            'is_package' => false,
+            'client_package_id' => null,
+            'left_sec' => 0,
+            'seconds_left' => 0,
+            'from' => 'pending',
+            'zone' => $pcView['zone'],
+            'rate_per_hour' => $pcView['rate_per_hour'],
+            'next_charge_at' => null,
+            'paused' => true,
+            'pricing_rule' => null,
         ];
     }
 }

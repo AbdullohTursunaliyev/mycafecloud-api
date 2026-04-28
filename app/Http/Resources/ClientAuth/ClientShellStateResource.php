@@ -25,6 +25,7 @@ class ClientShellStateResource extends BaseJsonResource
                 'seconds_left' => $this->resource->session['seconds_left'] ?? 0,
                 'from' => $this->resource->session['from'] ?? 'balance',
             ],
+            'billing_options' => $this->resource->billingOptions,
             'command' => $this->resource->command,
         ];
     }

@@ -77,6 +77,8 @@ Route::middleware('throttle:10,1')->post('/auth/login', [AuthController::class, 
 // Client login (throttle)
 Route::middleware('throttle:20,1')->post('/client-auth/login', [ClientAuthController::class, 'login']);
 Route::get('/client-auth/state',  [ClientAuthController::class, 'state']);
+Route::post('/client-auth/session/start', [ClientAuthController::class, 'startSession']);
+Route::post('/client-auth/packages/buy', [ClientAuthController::class, 'buyPackage']);
 Route::post('/client-auth/logout', [ClientAuthController::class, 'logout']);
 Route::get('/client-auth/settings', [ClientAuthController::class, 'publicSettings']);
 Route::post('/pcs/heartbeat', [\App\Http\Controllers\Api\PcHeartbeatController::class, 'heartbeat']);
@@ -157,6 +159,7 @@ Route::prefix('cp')->group(function () {
  */
 Route::middleware('client.auth')->group(function () {
     Route::get('/client-auth/me', [ClientAuthController::class, 'me']);
+    Route::patch('/client-auth/account', [ClientAuthController::class, 'updateAccount']);
     Route::get('/shell/games', [ShellGameController::class, 'index']);
     Route::get('/client/game-profiles', [ClientGameProfileController::class, 'index']);
     Route::get('/client/game-profiles/{gameSlug}', [ClientGameProfileController::class, 'show']);

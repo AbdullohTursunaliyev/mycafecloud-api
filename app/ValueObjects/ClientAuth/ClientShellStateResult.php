@@ -10,6 +10,7 @@ readonly class ClientShellStateResult
         public array $pc,
         public array $session,
         public ?array $command,
+        public array $billingOptions = [],
     ) {
     }
 }

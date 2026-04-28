@@ -8,6 +8,7 @@ use App\Models\Client;
 use App\Models\ClientGameProfile;
 use App\Models\ClientPackage;
 use App\Models\Package;
+use App\Models\PackageSale;
 use App\Models\Pc;
 use App\Models\PcCommand;
 use App\Models\Session;
@@ -40,7 +41,150 @@ class ClientSessionService
         return $matchingPackage;
     }
 
-    public function startOrResumeShellSession(int $tenantId, Pc $pc, Client $client, ?ClientPackage $package = null, ?Carbon $now = null): Session
+    public function ensureShellStartAllowed(
+        int $tenantId,
+        Client $client,
+        Pc $pc,
+        string $source,
+        ?int $clientPackageId = null,
+    ): ?ClientPackage {
+        if ($source === 'package') {
+            $package = $this->resolveActivePackageForZone($tenantId, $client, $pc, $clientPackageId);
+            if (!$package) {
+                throw ValidationException::withMessages([
+                    'package' => 'No active package is available for this zone.',
+                ]);
+            }
+
+            return $package;
+        }
+
+        if ($this->wallets->total($client) <= 0) {
+            throw ValidationException::withMessages([
+                'balance' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ Р±Р°Р»Р°РЅСЃР°',
+            ]);
+        }
+
+        return null;
+    }
+
+    public function describeBillingOptions(int $tenantId, Client $client, Pc $pc): array
+    {
+        $pcView = $this->describePc($pc);
+        $zoneName = (string) ($pcView['zone'] ?? '');
+        $walletTotal = $this->wallets->total($client);
+        $activePackage = $this->resolveActivePackageForZone($tenantId, $client, $pc);
+
+        $packages = Package::query()
+            ->where('tenant_id', $tenantId)
+            ->where('is_active', true)
+            ->when($zoneName !== '', fn ($query) => $query->whereRaw('lower(zone) = lower(?)', [$zoneName]))
+            ->orderBy('price')
+            ->get()
+            ->map(fn (Package $package) => $this->packagePayload($package))
+            ->values()
+            ->all();
+
+        return [
+            'zone' => $zoneName,
+            'rate_per_hour' => (int) ($pcView['rate_per_hour'] ?? 0),
+            'balance' => [
+                'available' => $walletTotal > 0,
+                'amount' => $walletTotal,
+            ],
+            'active_package' => $activePackage ? $this->clientPackagePayload($activePackage) : null,
+            'packages' => $packages,
+        ];
+    }
+
+    public function purchasePackageFromClientBalance(
+        int $tenantId,
+        Client $client,
+        Pc $pc,
+        int $packageId,
+    ): array {
+        return DB::transaction(function () use ($tenantId, $client, $pc, $packageId) {
+            $lockedClient = Client::query()
+                ->where('tenant_id', $tenantId)
+                ->lockForUpdate()
+                ->findOrFail($client->id);
+
+            $package = Package::query()
+                ->where('tenant_id', $tenantId)
+                ->where('is_active', true)
+                ->findOrFail($packageId);
+
+            $pcView = $this->describePc($pc);
+            $zoneName = (string) ($pcView['zone'] ?? '');
+            if ($zoneName !== '' && strcasecmp((string) $package->zone, $zoneName) !== 0) {
+                throw ValidationException::withMessages([
+                    'package_id' => 'Package is not available for this PC zone.',
+                ]);
+            }
+
+            $activePackage = $this->resolveActivePackageForZone($tenantId, $lockedClient, $pc);
+            if ($activePackage) {
+                throw ValidationException::withMessages([
+                    'package_id' => 'Client already has an active package for this zone.',
+                ]);
+            }
+
+            $amount = (int) $package->price;
+            if ((int) $lockedClient->balance < $amount) {
+                throw ValidationException::withMessages([
+                    'balance' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ СЃСЂРµРґСЃС‚РІ РЅР° Р±Р°Р»Р°РЅСЃРµ РєР»РёРµРЅС‚Р°.',
+                ]);
+            }
+
+            $lockedClient->balance = (int) $lockedClient->balance - $amount;
+            $lockedClient->save();
+
+            $clientPackage = ClientPackage::query()->create([
+                'tenant_id' => $tenantId,
+                'client_id' => $lockedClient->id,
+                'package_id' => $package->id,
+                'remaining_min' => (int) $package->duration_min,
+                'expires_at' => null,
+                'status' => 'active',
+            ]);
+
+            PackageSale::query()->create([
+                'tenant_id' => $tenantId,
+                'client_id' => $lockedClient->id,
+                'package_id' => $package->id,
+                'payment_method' => 'balance',
+                'shift_id' => null,
+                'operator_id' => null,
+                'amount' => $amount,
+                'meta' => [
+                    'client_package_id' => $clientPackage->id,
+                    'package_name' => $package->name,
+                    'zone' => $package->zone,
+                    'duration_min' => (int) $package->duration_min,
+                    'source' => 'shell_gate',
+                ],
+            ]);
+
+            $clientPackage->loadMissing('package');
+            $lockedClient->refresh();
+
+            return [
+                'client' => $lockedClient,
+                'client_package' => $clientPackage,
+                'package' => $package,
+                'amount' => $amount,
+            ];
+        });
+    }
+
+    public function startOrResumeShellSession(
+        int $tenantId,
+        Pc $pc,
+        Client $client,
+        ?ClientPackage $package = null,
+        ?Carbon $now = null,
+        bool $preferPackage = true,
+    ): Session
     {
         $now = ($now ?: now())->copy();
 
@@ -78,7 +222,11 @@ class ClientSessionService
                 return $active;
             }
 
-            $package ??= $this->resolveActivePackageForZone($tenantId, $client, $lockedPc);
+            if ($preferPackage) {
+                $package ??= $this->resolveActivePackageForZone($tenantId, $client, $lockedPc);
+            } else {
+                $package = null;
+            }
 
             $session = Session::create([
                 'tenant_id' => $tenantId,
@@ -380,7 +528,12 @@ class ClientSessionService
         return $this->projection->describe($session, $client, $pc);
     }
 
-    public function resolveActivePackageForZone(int $tenantId, Client $client, Pc $pc): ?ClientPackage
+    public function resolveActivePackageForZone(
+        int $tenantId,
+        Client $client,
+        Pc $pc,
+        ?int $clientPackageId = null,
+    ): ?ClientPackage
     {
         $resolved = $this->pcZoneResolver->resolveNameAndRate($pc);
         $zoneName = $resolved['zone_name'];
@@ -399,11 +552,45 @@ class ClientSessionService
             ->orderByDesc('client_packages.id')
             ->select('client_packages.*');
 
+        if ($clientPackageId !== null) {
+            $query->where('client_packages.id', $clientPackageId);
+        }
+
         if ($zoneName) {
             $query->whereRaw('lower(packages.zone) = lower(?)', [$zoneName]);
         }
 
         return $query->first();
+    }
+
+    private function clientPackagePayload(ClientPackage $clientPackage): array
+    {
+        $package = $clientPackage->relationLoaded('package')
+            ? $clientPackage->package
+            : $clientPackage->package()->first();
+
+        return [
+            'client_package_id' => (int) $clientPackage->id,
+            'package_id' => $package?->id ? (int) $package->id : null,
+            'name' => $package?->name,
+            'zone' => $package?->zone,
+            'duration_min' => $package?->duration_min ? (int) $package->duration_min : null,
+            'remaining_min' => (int) $clientPackage->remaining_min,
+            'price' => $package?->price ? (int) $package->price : null,
+            'expires_at' => $clientPackage->expires_at?->toIso8601String(),
+            'status' => $clientPackage->status,
+        ];
+    }
+
+    private function packagePayload(Package $package): array
+    {
+        return [
+            'id' => (int) $package->id,
+            'name' => (string) $package->name,
+            'zone' => (string) $package->zone,
+            'duration_min' => (int) $package->duration_min,
+            'price' => (int) $package->price,
+        ];
     }
 
     private function finalizeSession(Session $session, Pc $pc, ?Client $client, Carbon $now, string $reason): void
