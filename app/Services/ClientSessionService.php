@@ -188,7 +188,7 @@ class ClientSessionService
     {
         $now = ($now ?: now())->copy();
 
-        return DB::transaction(function () use ($tenantId, $pc, $client, $package, $now) {
+        return DB::transaction(function () use ($tenantId, $pc, $client, $package, $now, $preferPackage) {
             $this->lockPc($tenantId, (int) $pc->id);
 
             $lockedPc = Pc::query()
