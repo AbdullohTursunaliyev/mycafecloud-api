@@ -34,7 +34,7 @@ class ClientSessionService
 
         if ($this->wallets->total($client) <= 0 && !$matchingPackage) {
             throw ValidationException::withMessages([
-                'balance' => 'Недостаточно баланса',
+                'balance' => 'Недостаточно баланса.',
             ]);
         }
 
@@ -52,7 +52,7 @@ class ClientSessionService
             $package = $this->resolveActivePackageForZone($tenantId, $client, $pc, $clientPackageId);
             if (!$package) {
                 throw ValidationException::withMessages([
-                    'package' => 'No active package is available for this zone.',
+                    'package' => 'Активный пакет для этой зоны не найден.',
                 ]);
             }
 
@@ -61,7 +61,7 @@ class ClientSessionService
 
         if ($this->wallets->total($client) <= 0) {
             throw ValidationException::withMessages([
-                'balance' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ Р±Р°Р»Р°РЅСЃР°',
+                'balance' => 'Недостаточно баланса.',
             ]);
         }
 
@@ -118,21 +118,21 @@ class ClientSessionService
             $zoneName = (string) ($pcView['zone'] ?? '');
             if ($zoneName !== '' && strcasecmp((string) $package->zone, $zoneName) !== 0) {
                 throw ValidationException::withMessages([
-                    'package_id' => 'Package is not available for this PC zone.',
+                    'package_id' => 'Пакет недоступен для этой зоны.',
                 ]);
             }
 
             $activePackage = $this->resolveActivePackageForZone($tenantId, $lockedClient, $pc);
             if ($activePackage) {
                 throw ValidationException::withMessages([
-                    'package_id' => 'Client already has an active package for this zone.',
+                    'package_id' => 'У клиента уже есть активный пакет для этой зоны.',
                 ]);
             }
 
             $amount = (int) $package->price;
             if ((int) $lockedClient->balance < $amount) {
                 throw ValidationException::withMessages([
-                    'balance' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ СЃСЂРµРґСЃС‚РІ РЅР° Р±Р°Р»Р°РЅСЃРµ РєР»РёРµРЅС‚Р°.',
+                    'balance' => 'Недостаточно средств на балансе клиента.',
                 ]);
             }
 
